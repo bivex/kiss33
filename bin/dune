@@ -1,0 +1,4 @@
+(executable
+ (public_name reforge)
+ (name main)
+ (libraries reforge_cli reforge_infra cmdliner))

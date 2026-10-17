@@ -1,0 +1,4 @@
+(library
+ (name reforge_cli)
+ (libraries reforge_app reforge_ports reforge_domain cmdliner yojson)
+ (flags (:standard -w -70)))

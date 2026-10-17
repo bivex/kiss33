@@ -1,0 +1,5 @@
+_build/
+.reforge/
+*.install
+~*
+.*.swp
