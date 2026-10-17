@@ -124,6 +124,8 @@ reforge [COMMAND] [OPTIONS]
 | `reforge plan move <SRC> <DST>` | Generate a change plan to move/rename a file or directory with semantic rewrites. |
 | `reforge plan rename-fn <FILE> <OLD> <NEW>` | Plan renaming a top-level function across definition, `.mli` interface, and all call sites repo-wide. |
 | `reforge plan move-fn <SRC> <DST> <FN>` | Plan moving a top-level function to another module with `.mli` sync and call site updates. |
+| `reforge plan rename-arg <FILE> <FN> <OLD> <NEW>` | Plan renaming a function argument (positional, labeled `~x`, or optional `?x`) across definition, body usages, `.mli`, and call sites. |
+| `reforge plan remove-arg <FILE> <FN> <ARG>` | Plan removing an unused argument from definition, `.mli` signature, and call sites (rejects if used in body). |
 | `reforge preview [PLAN]` | Show byte-precise unified diffs and operations of a plan (defaults to latest). |
 | `reforge diff [--plan=PLAN]` | Show unified diffs for a plan or applied changes. |
 | `reforge apply [PLAN]` | Execute the plan transactionally with automatic backups. |
@@ -237,6 +239,42 @@ created .reforge/plans/plan-0003.json
     edit  bin/main.ml (1 edits)
     edit  lib/extra.ml (1 edits)
     edit  lib/util.ml (1 edits)
+
+$ reforge apply
+$ reforge validate
+```
+
+### 7. Function Argument Refactoring
+
+#### Rename a Function Argument
+Rename a positional or labeled/optional argument. For positional arguments, definition and body usages are updated without breaking callers. For labeled arguments (`~x` or `?x`), the parameter definition, the arrow signature in `.mli`, and call sites across the codebase (`~old:v` -> `~new:v`, punned `~old` -> `~new:old`) are updated:
+
+```bash
+# Rename labeled argument ~fmt to ~format
+$ reforge plan rename-arg lib/util.ml greet fmt format
+created .reforge/plans/plan-0004.json
+  rename arg 'fmt' -> 'format' in greet (lib/util.ml) (3 files edited)
+  operations:
+    edit  bin/main.ml (1 edits)
+    edit  lib/util.ml (2 edits)
+    edit  lib/util.mli (1 edits)
+
+$ reforge preview
+$ reforge apply
+$ reforge validate
+```
+
+#### Remove an Unused Argument
+Remove an obsolete argument from function definitions, interface signatures (`.mli`), and labeled call sites. Reforge enforces a safety invariant: if the argument is referenced in the function body, the plan is rejected with `Arg_in_use`:
+
+```bash
+# Remove unused argument `dummy`
+$ reforge plan remove-arg lib/util.ml greet dummy
+created .reforge/plans/plan-0005.json
+  remove arg 'dummy' from greet (lib/util.ml) (2 files edited)
+  operations:
+    edit  lib/util.ml (1 edits)
+    edit  lib/util.mli (1 edits)
 
 $ reforge apply
 $ reforge validate

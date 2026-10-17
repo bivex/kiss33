@@ -4,6 +4,8 @@ type intent =
   | Move of { src : string; dst : string; semantic : bool }
   | Rename_fn of { file : string; old_name : string; new_name : string }
   | Move_fn of { src : string; dst : string; fn_name : string }
+  | Rename_arg of { file : string; fn_name : string; old_arg : string; new_arg : string }
+  | Remove_arg of { file : string; fn_name : string; arg_name : string }
 
 type plan_error =
   | Src_not_found of string
@@ -15,6 +17,10 @@ type plan_error =
   | Fn_not_found of string * string
   | Fn_collision of string * string
   | Invalid_fn_name of string
+  | Arg_not_found of string * string * string
+  | Arg_collision of string * string * string
+  | Arg_in_use of string * string * string
+  | Invalid_arg_name of string
 
 val pe_message : plan_error -> string
 
@@ -53,3 +59,20 @@ val plan_move_fn :
   fn_name:string ->
   (Change_plan.t, plan_error) result
 (** Move a function from [src] to [dst], updating interfaces and call sites. *)
+
+val plan_rename_arg :
+  ctx:ctx ->
+  file:string ->
+  fn_name:string ->
+  old_arg:string ->
+  new_arg:string ->
+  (Change_plan.t, plan_error) result
+(** Rename a function parameter across definition, usages, interface, and call sites. *)
+
+val plan_remove_arg :
+  ctx:ctx ->
+  file:string ->
+  fn_name:string ->
+  arg_name:string ->
+  (Change_plan.t, plan_error) result
+(** Remove an unused parameter from a function definition, interface, and call sites. *)

@@ -41,10 +41,35 @@ type reference = {
   ref_context : ref_context;
 }
 
+type arg_kind =
+  | Positional
+  | Labelled of string
+  | Optional of string
+
+type fn_param = {
+  fp_name : string;
+  fp_kind : arg_kind;
+  fp_loc : loc;
+  fp_full_loc : loc;
+}
+
+type call_arg = {
+  ca_kind : arg_kind;
+  ca_loc : loc;
+}
+
+type call_site = {
+  cs_fn_segments : string list;
+  cs_fn_loc : loc;
+  cs_args : call_arg list;
+}
+
 type value_def = {
   vd_name : string;
   vd_loc : loc;
   vd_full_loc : loc;
+  vd_params : fn_param list;
+  vd_body_loc : loc option;
 }
 
 type analysis = {
@@ -54,6 +79,7 @@ type analysis = {
   value_defs : value_def list;
   val_specs : value_def list;
   references : reference list;
+  call_sites : call_site list;
 }
 
 val head_of_reference : reference -> string option

@@ -48,23 +48,28 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
       }
       :: !defs
   in
-  let push_val_def name loc full_loc =
+  let call_sites = ref [] in
+  let push_val_def name loc full_loc params body_loc =
     if !prefix = [] then (* only top-level definitions in module scope *)
       value_defs :=
         {
           Source_file.vd_name = name;
           vd_loc = loc;
           vd_full_loc = full_loc;
+          vd_params = params;
+          vd_body_loc = body_loc;
         }
         :: !value_defs
   in
-  let push_val_spec name loc full_loc =
+  let push_val_spec name loc full_loc params =
     if !prefix = [] then
       val_specs :=
         {
           Source_file.vd_name = name;
           vd_loc = loc;
           vd_full_loc = full_loc;
+          vd_params = params;
+          vd_body_loc = None;
         }
         :: !val_specs
   in
@@ -80,6 +85,46 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
   let push_lident (lid : Longident.t Asttypes.loc) ctx =
     if not lid.loc.Location.loc_ghost then
       push_ref (flatten_lident lid.Asttypes.txt) (loc_of lid.Asttypes.loc) ctx
+  in
+  let rec extract_params_and_body expr =
+    match (expr.Parsetree.pexp_desc : Parsetree.expression_desc) with
+    | Pexp_function (params, _constraint, body) ->
+        let parsed_params =
+          List.filter_map
+            (fun (p : Parsetree.function_param) ->
+               match p.Parsetree.pparam_desc with
+               | Pparam_val (lbl, _def_opt, pat) ->
+                   let kind =
+                     match lbl with
+                     | Asttypes.Nolabel -> Source_file.Positional
+                     | Asttypes.Labelled s -> Source_file.Labelled s
+                     | Asttypes.Optional s -> Source_file.Optional s
+                   in
+                   let rec pat_ident pat =
+                     match (pat.Parsetree.ppat_desc : Parsetree.pattern_desc) with
+                     | Ppat_var v -> Some (v.Asttypes.txt, loc_of v.Asttypes.loc)
+                     | Ppat_constraint (p, _) -> pat_ident p
+                     | _ -> None
+                   in
+                   (match pat_ident pat with
+                    | Some (pname, ploc) ->
+                        Some
+                          {
+                            Source_file.fp_name = pname;
+                            fp_kind = kind;
+                            fp_loc = ploc;
+                            fp_full_loc = loc_of p.Parsetree.pparam_loc;
+                          }
+                    | None -> None)
+               | Pparam_newtype _ -> None)
+            params
+        in
+        (match body with
+         | Pfunction_body b ->
+             let inner_params, final_body = extract_params_and_body b in
+             (parsed_params @ inner_params, final_body)
+         | Pfunction_cases _ -> (parsed_params, Some (loc_of expr.Parsetree.pexp_loc)))
+    | _ -> ([], Some (loc_of expr.Parsetree.pexp_loc))
   in
   let iterator =
     let open Ast_iterator in
@@ -105,7 +150,8 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
                     in
                     match extract_var vb.Parsetree.pvb_pat with
                     | Some (name, loc) ->
-                        push_val_def name loc (loc_of item.Parsetree.pstr_loc)
+                        let params, body_loc = extract_params_and_body vb.Parsetree.pvb_expr in
+                        push_val_def name loc (loc_of item.Parsetree.pstr_loc) params body_loc
                     | None -> ())
                  bindings;
                default.structure_item it item
@@ -143,9 +189,36 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
         (fun it item ->
            match (item.Parsetree.psig_desc : Parsetree.signature_item_desc) with
            | Psig_value vd ->
+               let rec extract_arrows ty =
+                 match (ty.Parsetree.ptyp_desc : Parsetree.core_type_desc) with
+                 | Ptyp_arrow (lbl, t1, t2) ->
+                     let kind =
+                       match lbl with
+                       | Asttypes.Nolabel -> Source_file.Positional
+                       | Asttypes.Labelled s -> Source_file.Labelled s
+                       | Asttypes.Optional s -> Source_file.Optional s
+                     in
+                     let name =
+                       match lbl with
+                       | Asttypes.Labelled s | Asttypes.Optional s -> s
+                       | Asttypes.Nolabel -> ""
+                     in
+                     let param =
+                       {
+                         Source_file.fp_name = name;
+                         fp_kind = kind;
+                         fp_loc = loc_of ty.Parsetree.ptyp_loc;
+                         fp_full_loc = loc_of t1.Parsetree.ptyp_loc;
+                       }
+                     in
+                     param :: extract_arrows t2
+                 | _ -> []
+               in
+               let params = extract_arrows vd.Parsetree.pval_type in
                push_val_spec vd.Parsetree.pval_name.Asttypes.txt
                  (loc_of vd.Parsetree.pval_name.Asttypes.loc)
-                 (loc_of item.Parsetree.psig_loc);
+                 (loc_of item.Parsetree.psig_loc)
+                 params;
                default.signature_item it item
            | Psig_module md -> (
                (match md.Parsetree.pmd_name.Asttypes.txt with
@@ -172,6 +245,34 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
         (fun it e ->
            match (e.Parsetree.pexp_desc : Parsetree.expression_desc) with
            | Pexp_ident lid -> push_lident lid Source_file.Ref_value
+           | Pexp_apply (fn, args) ->
+               let fn_segs =
+                 match (fn.Parsetree.pexp_desc : Parsetree.expression_desc) with
+                 | Pexp_ident lid -> flatten_lident lid.Asttypes.txt
+                 | _ -> []
+               in
+               if fn_segs <> [] then begin
+                 let ca_args =
+                   List.map
+                     (fun (lbl, (arg_e : Parsetree.expression)) ->
+                        let kind =
+                          match lbl with
+                          | Asttypes.Nolabel -> Source_file.Positional
+                          | Asttypes.Labelled s -> Source_file.Labelled s
+                          | Asttypes.Optional s -> Source_file.Optional s
+                        in
+                        { Source_file.ca_kind = kind; ca_loc = loc_of arg_e.Parsetree.pexp_loc })
+                     args
+                 in
+                 call_sites :=
+                   {
+                     Source_file.cs_fn_segments = fn_segs;
+                     cs_fn_loc = loc_of fn.Parsetree.pexp_loc;
+                     cs_args = ca_args;
+                   }
+                   :: !call_sites
+               end;
+               default.expr it e
            | Pexp_construct (lid, arg) ->
                push_lident lid Source_file.Ref_constructor;
                Option.iter (it.expr it) arg
@@ -254,6 +355,7 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
        value_defs = List.rev !value_defs;
        val_specs = List.rev !val_specs;
        references = List.rev !refs;
+       call_sites = List.rev !call_sites;
      }
    with
   | Syntaxerr.Error err ->

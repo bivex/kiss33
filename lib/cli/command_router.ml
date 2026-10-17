@@ -331,9 +331,25 @@ let run_inspect ~rt ~json root file =
                   `List
                     (List.map
                        (fun vd ->
+                          let ps =
+                            `List
+                              (List.map
+                                 (fun (p : Source_file.fn_param) ->
+                                    let kind_s =
+                                      match p.fp_kind with
+                                      | Positional -> "positional"
+                                      | Labelled _ -> "labelled"
+                                      | Optional _ -> "optional"
+                                    in
+                                    `Assoc
+                                      [ ("name", `String p.fp_name);
+                                        ("kind", `String kind_s) ])
+                                 vd.Source_file.vd_params)
+                          in
                           `Assoc
                             [ ("name", `String vd.Source_file.vd_name);
-                              ("line", `Int vd.Source_file.vd_loc.Source_file.start_lnum) ])
+                              ("line", `Int vd.Source_file.vd_loc.Source_file.start_lnum);
+                              ("params", ps) ])
                        analysis.Source_file.value_defs)
                 in
                 let refs =
@@ -395,7 +411,17 @@ let run_inspect ~rt ~json root file =
                   (List.length analysis.Source_file.value_defs);
                 analysis.Source_file.value_defs
                 |> List.iter (fun vd ->
-                       Printf.printf "    fn %s (line %d)\n" vd.Source_file.vd_name
+                       let param_str (p : Source_file.fn_param) =
+                         match p.fp_kind with
+                         | Positional -> p.fp_name
+                         | Labelled _ -> "~" ^ p.fp_name
+                         | Optional _ -> "?" ^ p.fp_name
+                       in
+                       let params_summary =
+                         if vd.Source_file.vd_params = [] then ""
+                         else " (" ^ String.concat ", " (List.map param_str vd.vd_params) ^ ")"
+                       in
+                       Printf.printf "    fn %s%s (line %d)\n" vd.Source_file.vd_name params_summary
                          vd.Source_file.vd_loc.Source_file.start_lnum);
                 Printf.printf "  references: %d\n"
                   (List.length analysis.Source_file.references)
@@ -554,6 +580,34 @@ let run_plan_move_fn ~rt ~json root src dst fn_name =
       else (prerr_endline ("error: " ^ e); exit exit_usage_code)
   | Ok (plan, path) ->
       emit_plan_created ~command:"plan move-fn" ~json plan path
+
+let run_plan_rename_arg ~rt ~json root file fn_name old_arg new_arg =
+  if file = "" || fn_name = "" || old_arg = "" || new_arg = "" then begin
+    let msg = "missing required arguments: FILE FN OLD_ARG NEW_ARG" in
+    if json then (emit_error_json ~command:"plan rename-arg" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_rename_arg ~rt ~config ~root ~file ~fn_name ~old_arg ~new_arg () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan rename-arg" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan rename-arg" ~json plan path
+
+let run_plan_remove_arg ~rt ~json root file fn_name arg_name =
+  if file = "" || fn_name = "" || arg_name = "" then begin
+    let msg = "missing required arguments: FILE FN ARG" in
+    if json then (emit_error_json ~command:"plan remove-arg" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_remove_arg ~rt ~config ~root ~file ~fn_name ~arg_name () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan remove-arg" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan remove-arg" ~json plan path
 
 let load_plan_or_exit ~rt ~json ~root ~command ref =
   let module St = (val rt.Reforge_ports.Runtime.store) in
@@ -931,9 +985,28 @@ let run ~rt ~argv () : int =
        and+ fn = Arg.(value & pos 2 string "" & info [] ~docv:"FN" ~doc:"Function name to move.") in
        run_plan_move_fn ~rt ~json:j r src dst fn)
   in
+  let plan_rename_arg_cmd =
+    mk "rename-arg" "Plan renaming a function parameter across definition, usages, interface, and call sites."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"File containing the function definition.")
+       and+ fn = Arg.(value & pos 1 string "" & info [] ~docv:"FN" ~doc:"Function name.")
+       and+ old_arg = Arg.(value & pos 2 string "" & info [] ~docv:"OLD_ARG" ~doc:"Current name of the parameter.")
+       and+ new_arg = Arg.(value & pos 3 string "" & info [] ~docv:"NEW_ARG" ~doc:"New name of the parameter.") in
+       run_plan_rename_arg ~rt ~json:j r file fn old_arg new_arg)
+  in
+  let plan_remove_arg_cmd =
+    mk "remove-arg" "Plan removing an unused function parameter."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"File containing the function definition.")
+       and+ fn = Arg.(value & pos 1 string "" & info [] ~docv:"FN" ~doc:"Function name.")
+       and+ arg = Arg.(value & pos 2 string "" & info [] ~docv:"ARG" ~doc:"Parameter name to remove.") in
+       run_plan_remove_arg ~rt ~json:j r file fn arg)
+  in
   let plan_cmd =
     Cmd.group (Cmd.info "plan" ~doc:"Create change plans.")
-      [ plan_move_cmd; plan_rename_fn_cmd; plan_move_fn_cmd ]
+      [ plan_move_cmd; plan_rename_fn_cmd; plan_move_fn_cmd; plan_rename_arg_cmd; plan_remove_arg_cmd ]
   in
   let preview_cmd =
     mk "preview" "Show a plan's operations and diffs."

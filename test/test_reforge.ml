@@ -56,20 +56,26 @@ let test_function_analyzer () =
   let module An = (val Reforge_infra.Ocaml_analyzer.ocaml_analyzer) in
   let an = An.create () in
   let ml_content =
-    "let f x = x + 1\nlet rec g y = if y <= 0 then 0 else g (y - 1)\nlet a, b = (1, 2)\n"
+    "let f x ~y ?(z = 0) = x + y + z\nlet rec g y = if y <= 0 then 0 else g (y - 1)\nlet a, b = (1, 2)\n"
   in
   let a_ml = An.analyze an ~path:"lib/math.ml" ~content:ml_content in
   Alcotest.(check bool) "ml parse ok" true a_ml.Source_file.parse_ok;
   let fn_names = List.map (fun (vd : Source_file.value_def) -> vd.vd_name) a_ml.Source_file.value_defs in
   Alcotest.(check (list string)) "value defs found" [ "f"; "g" ] fn_names;
+  let f_def = List.find (fun vd -> vd.Source_file.vd_name = "f") a_ml.Source_file.value_defs in
+  let f_param_names = List.map (fun p -> p.Source_file.fp_name) f_def.vd_params in
+  Alcotest.(check (list string)) "f parameters found" [ "x"; "y"; "z" ] f_param_names;
 
   let mli_content =
-    "val f : int -> int\nval g : int -> int\n"
+    "val f : int -> y:int -> ?z:int -> int\nval g : int -> int\n"
   in
   let a_mli = An.analyze an ~path:"lib/math.mli" ~content:mli_content in
   Alcotest.(check bool) "mli parse ok" true a_mli.Source_file.parse_ok;
   let val_names = List.map (fun (vs : Source_file.value_def) -> vs.vd_name) a_mli.Source_file.val_specs in
-  Alcotest.(check (list string)) "val specs found" [ "f"; "g" ] val_names
+  Alcotest.(check (list string)) "val specs found" [ "f"; "g" ] val_names;
+  let f_val = List.find (fun vs -> vs.Source_file.vd_name = "f") a_mli.Source_file.val_specs in
+  let f_val_params = List.map (fun p -> p.Source_file.fp_name) f_val.vd_params in
+  Alcotest.(check (list string)) "f val arrow params" [ ""; "y"; "z" ] f_val_params
 
 let test_dune_analyzer () =
   let module An = (val Reforge_infra.Ocaml_analyzer.ocaml_analyzer) in
@@ -132,6 +138,7 @@ let test_cycles () =
       value_defs = [];
       val_specs = [];
       references = [ { ref_segments = [ "B"; "foo" ]; ref_loc = loc; ref_context = Source_file.Ref_value } ];
+      call_sites = [];
     }
   in
   let b_analysis =
@@ -142,6 +149,7 @@ let test_cycles () =
       value_defs = [];
       val_specs = [];
       references = [ { ref_segments = [ "C"; "bar" ]; ref_loc = loc; ref_context = Source_file.Ref_value } ];
+      call_sites = [];
     }
   in
   let c_analysis =
@@ -152,6 +160,7 @@ let test_cycles () =
       value_defs = [];
       val_specs = [];
       references = [ { ref_segments = [ "A"; "baz" ]; ref_loc = loc; ref_context = Source_file.Ref_value } ];
+      call_sites = [];
     }
   in
   let graph = Module_graph.build repo [ ("cyc/a.ml", a_analysis); ("cyc/b.ml", b_analysis); ("cyc/c.ml", c_analysis) ] in
@@ -468,6 +477,170 @@ let test_fn_refactoring_errors () =
    | Error msg -> Alcotest.(check bool) "error src=dst" true (String.starts_with ~prefix:"source and destination are the same" msg)
    | Ok _ -> Alcotest.fail "expected error for src=dst")
 
+let test_e2e_rename_arg_positional () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let util_path = Filename.concat root "lib/util.ml" in
+  let oc = open_out_bin util_path in
+  output_string oc "let add a b = a + b + a\n";
+  close_out oc;
+
+  (* 1. Plan rename-arg lib/util.ml add a x *)
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_rename_arg ~rt:runtime ~config ~root
+      ~file:"lib/util.ml" ~fn_name:"add" ~old_arg:"a" ~new_arg:"x" ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_rename_arg failed: " ^ e)
+  | Ok (plan, _path) ->
+      (* 2. Apply *)
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       | Ok applied ->
+           Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
+           let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+           Alcotest.(check string) "util.ml rewritten" "let add x b = x + b + x\n" util_c;
+
+           (* 3. Validate *)
+           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+            | Error e -> Alcotest.fail ("validate failed: " ^ e)
+            | Ok checks ->
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+
+           (* 4. Undo *)
+           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+            | Error e -> Alcotest.fail ("undo failed: " ^ e)
+            | Ok _ ->
+                let restored = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+                Alcotest.(check string) "util.ml restored" "let add a b = a + b + a\n" restored))
+
+let test_e2e_rename_arg_labelled () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/util.ml" "let greet ~name ~greeting = greeting ^ \" \" ^ name\n";
+  write "lib/util.mli" "val greet : name:string -> greeting:string -> string\n";
+  write "bin/main.ml" "let () = print_endline (Sample_lib.Util.greet ~name:\"Alice\" ~greeting:\"Hello\")\n";
+
+  (* 1. Plan rename-arg lib/util.ml greet name person *)
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_rename_arg ~rt:runtime ~config ~root
+      ~file:"lib/util.ml" ~fn_name:"greet" ~old_arg:"name" ~new_arg:"person" ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_rename_arg failed: " ^ e)
+  | Ok (plan, _path) ->
+      let edited_files =
+        List.filter_map
+          (function
+            | Change_plan.Op_edit_file { path; _ } -> Some path
+            | _ -> None)
+          plan.cp_ops
+        |> List.sort compare
+      in
+      Alcotest.(check (list string)) "edited files"
+        [ "bin/main.ml"; "lib/util.ml"; "lib/util.mli" ] edited_files;
+
+      (* 2. Apply *)
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       | Ok applied ->
+           Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
+           let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+           let mli_c = In_channel.with_open_bin (Filename.concat root "lib/util.mli") In_channel.input_all in
+           let main_c = In_channel.with_open_bin (Filename.concat root "bin/main.ml") In_channel.input_all in
+           Alcotest.(check bool) "util.ml uses person" true (String.starts_with ~prefix:"let greet ~person" util_c);
+           Alcotest.(check bool) "util.mli uses person" true (String.starts_with ~prefix:"val greet : person:string" mli_c);
+           Alcotest.(check bool) "main.ml uses person" true (try ignore (String.index main_c 'p'); true with Not_found -> false);
+
+           (* 3. Validate *)
+           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+            | Error e -> Alcotest.fail ("validate failed: " ^ e)
+            | Ok checks ->
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+
+           (* 4. Undo *)
+           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+            | Error e -> Alcotest.fail ("undo failed: " ^ e)
+            | Ok _ ->
+                let restored_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+                Alcotest.(check bool) "util.ml restored" true (String.starts_with ~prefix:"let greet ~name" restored_util)))
+
+let test_e2e_remove_arg () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/util.ml" "let compute x ~unused = x + 1\n";
+  write "lib/util.mli" "val compute : int -> unused:int -> int\n";
+  write "bin/main.ml" "let () = print_int (Sample_lib.Util.compute 10 ~unused:42)\n";
+
+  (* 1. Plan remove-arg lib/util.ml compute unused *)
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_remove_arg ~rt:runtime ~config ~root
+      ~file:"lib/util.ml" ~fn_name:"compute" ~arg_name:"unused" ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_remove_arg failed: " ^ e)
+  | Ok (plan, _path) ->
+      (* 2. Apply *)
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       | Ok applied ->
+           Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
+           let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+           let mli_c = In_channel.with_open_bin (Filename.concat root "lib/util.mli") In_channel.input_all in
+           let main_c = In_channel.with_open_bin (Filename.concat root "bin/main.ml") In_channel.input_all in
+           Alcotest.(check string) "util.ml removed param" "let compute x = x + 1\n" util_c;
+           Alcotest.(check string) "util.mli removed param" "val compute : int -> int\n" mli_c;
+           Alcotest.(check string) "main.ml removed call arg" "let () = print_int (Sample_lib.Util.compute 10)\n" main_c;
+
+           (* 3. Validate *)
+           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+            | Error e -> Alcotest.fail ("validate failed: " ^ e)
+            | Ok checks ->
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+
+           (* 4. Undo *)
+           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+            | Error e -> Alcotest.fail ("undo failed: " ^ e)
+            | Ok _ ->
+                let restored_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+                Alcotest.(check string) "util.ml restored" "let compute x ~unused = x + 1\n" restored_util))
+
+let test_arg_refactoring_errors () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  (* Arg not found *)
+  (match Reforge_app.Plan_refactoring.plan_rename_arg ~rt:runtime ~config ~root ~file:"lib/util.ml" ~fn_name:"hello" ~old_arg:"no_such" ~new_arg:"foo" () with
+   | Error msg -> Alcotest.(check bool) "error has not found" true (String.starts_with ~prefix:"argument 'no_such' not found" msg)
+   | Ok _ -> Alcotest.fail "expected error for non-existent argument");
+
+  (* Removing argument that is in use *)
+  let p = Filename.concat root "lib/util.ml" in
+  let oc = open_out_bin p in
+  output_string oc "let greet name = \"Hello \" ^ name\n";
+  close_out oc;
+  (match Reforge_app.Plan_refactoring.plan_remove_arg ~rt:runtime ~config ~root ~file:"lib/util.ml" ~fn_name:"greet" ~arg_name:"name" () with
+   | Error msg -> Alcotest.(check bool) "error has in use" true (String.starts_with ~prefix:"cannot remove argument 'name'" msg)
+   | Ok _ -> Alcotest.fail "expected error removing argument in use")
+
 (* ------------------------------------------------------------------ *)
 (* Test runner                                                        *)
 (* ------------------------------------------------------------------ *)
@@ -494,6 +667,10 @@ let () =
           Alcotest.test_case "e2e rename-fn" `Quick test_e2e_rename_fn;
           Alcotest.test_case "e2e move-fn" `Quick test_e2e_move_fn;
           Alcotest.test_case "function refactoring errors" `Quick test_fn_refactoring_errors;
+          Alcotest.test_case "e2e rename-arg positional" `Quick test_e2e_rename_arg_positional;
+          Alcotest.test_case "e2e rename-arg labelled" `Quick test_e2e_rename_arg_labelled;
+          Alcotest.test_case "e2e remove-arg" `Quick test_e2e_remove_arg;
+          Alcotest.test_case "argument refactoring errors" `Quick test_arg_refactoring_errors;
           Alcotest.test_case "stale plan rejection" `Quick test_stale_plan_rejection;
         ] );
     ]
