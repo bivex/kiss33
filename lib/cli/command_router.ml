@@ -609,6 +609,34 @@ let run_plan_remove_arg ~rt ~json root file fn_name arg_name =
   | Ok (plan, path) ->
       emit_plan_created ~command:"plan remove-arg" ~json plan path
 
+let run_plan_label_arg ~rt ~json root file fn_name arg_name label =
+  if file = "" || fn_name = "" || arg_name = "" || label = "" then begin
+    let msg = "missing required arguments: FILE FN ARG LABEL" in
+    if json then (emit_error_json ~command:"plan label-arg" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_label_arg ~rt ~config ~root ~file ~fn_name ~arg_name ~label () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan label-arg" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan label-arg" ~json plan path
+
+let run_plan_extract_constant ~rt ~json root file literal const_name =
+  if file = "" || literal = "" || const_name = "" then begin
+    let msg = "missing required arguments: FILE LITERAL CONST_NAME" in
+    if json then (emit_error_json ~command:"plan extract-constant" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_extract_constant ~rt ~config ~root ~file ~literal ~const_name () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan extract-constant" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan extract-constant" ~json plan path
+
 let load_plan_or_exit ~rt ~json ~root ~command ref =
   let module St = (val rt.Reforge_ports.Runtime.store) in
   let store_t = St.create ~root in
@@ -1004,9 +1032,36 @@ let run ~rt ~argv () : int =
        and+ arg = Arg.(value & pos 2 string "" & info [] ~docv:"ARG" ~doc:"Parameter name to remove.") in
        run_plan_remove_arg ~rt ~json:j r file fn arg)
   in
+  let plan_label_arg_cmd =
+    mk "label-arg" "Plan converting a positional parameter to a labeled parameter (~label)."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"File containing the function definition.")
+       and+ fn = Arg.(value & pos 1 string "" & info [] ~docv:"FN" ~doc:"Function name.")
+       and+ arg = Arg.(value & pos 2 string "" & info [] ~docv:"ARG" ~doc:"Positional parameter name to label.")
+       and+ label = Arg.(value & pos 3 string "" & info [] ~docv:"LABEL" ~doc:"Label name (~label).") in
+       run_plan_label_arg ~rt ~json:j r file fn arg label)
+  in
+  let plan_extract_constant_cmd =
+    mk "extract-constant" "Plan extracting repeated literal expressions into a named constant at top-level."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"File to refactor.")
+       and+ literal = Arg.(value & pos 1 string "" & info [] ~docv:"LITERAL" ~doc:"Literal string/number to extract.")
+       and+ const = Arg.(value & pos 2 string "" & info [] ~docv:"CONST_NAME" ~doc:"Name for the new constant.") in
+       run_plan_extract_constant ~rt ~json:j r file literal const)
+  in
   let plan_cmd =
     Cmd.group (Cmd.info "plan" ~doc:"Create change plans.")
-      [ plan_move_cmd; plan_rename_fn_cmd; plan_move_fn_cmd; plan_rename_arg_cmd; plan_remove_arg_cmd ]
+      [
+        plan_move_cmd;
+        plan_rename_fn_cmd;
+        plan_move_fn_cmd;
+        plan_rename_arg_cmd;
+        plan_remove_arg_cmd;
+        plan_label_arg_cmd;
+        plan_extract_constant_cmd;
+      ]
   in
   let preview_cmd =
     mk "preview" "Show a plan's operations and diffs."

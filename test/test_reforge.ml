@@ -139,6 +139,7 @@ let test_cycles () =
       val_specs = [];
       references = [ { ref_segments = [ "B"; "foo" ]; ref_loc = loc; ref_context = Source_file.Ref_value } ];
       call_sites = [];
+      literals = [];
     }
   in
   let b_analysis =
@@ -150,6 +151,7 @@ let test_cycles () =
       val_specs = [];
       references = [ { ref_segments = [ "C"; "bar" ]; ref_loc = loc; ref_context = Source_file.Ref_value } ];
       call_sites = [];
+      literals = [];
     }
   in
   let c_analysis =
@@ -161,6 +163,7 @@ let test_cycles () =
       val_specs = [];
       references = [ { ref_segments = [ "A"; "baz" ]; ref_loc = loc; ref_context = Source_file.Ref_value } ];
       call_sites = [];
+      literals = [];
     }
   in
   let graph = Module_graph.build repo [ ("cyc/a.ml", a_analysis); ("cyc/b.ml", b_analysis); ("cyc/c.ml", c_analysis) ] in
@@ -641,6 +644,127 @@ let test_arg_refactoring_errors () =
    | Error msg -> Alcotest.(check bool) "error has in use" true (String.starts_with ~prefix:"cannot remove argument 'name'" msg)
    | Ok _ -> Alcotest.fail "expected error removing argument in use")
 
+let test_e2e_label_arg () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  (* Setup util.ml, util.mli, and bin/main.ml *)
+  let oc = open_out_bin (Filename.concat root "lib/util.ml") in
+  output_string oc "let greet prefix name = prefix ^ \" \" ^ name\n";
+  close_out oc;
+
+  let oc = open_out_bin (Filename.concat root "lib/util.mli") in
+  output_string oc "val greet : string -> string -> string\n";
+  close_out oc;
+
+  let oc = open_out_bin (Filename.concat root "bin/main.ml") in
+  output_string oc "let () = print_endline (Sample_lib.Util.greet \"Hello\" \"World\")\n";
+  close_out oc;
+
+  match Reforge_app.Plan_refactoring.plan_label_arg ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"greet" ~arg_name:"prefix" ~label:"prefix" () with
+  | Error e -> Alcotest.fail ("planning failed: " ^ e)
+  | Ok (plan, _) ->
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error e -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure e)
+       | Ok _ ->
+           let new_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+           let new_mli = In_channel.with_open_bin (Filename.concat root "lib/util.mli") In_channel.input_all in
+           let new_main = In_channel.with_open_bin (Filename.concat root "bin/main.ml") In_channel.input_all in
+           Alcotest.(check string) "util.ml labeled" "let greet ~prefix name = prefix ^ \" \" ^ name\n" new_util;
+           Alcotest.(check string) "util.mli labeled" "val greet : prefix:string -> string -> string\n" new_mli;
+           Alcotest.(check string) "main.ml call site labeled" "let () = print_endline (Sample_lib.Util.greet ~prefix:\"Hello\" \"World\")\n" new_main;
+
+           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+            | Error e -> Alcotest.fail ("validate failed: " ^ e)
+            | Ok checks ->
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+
+           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+            | Error e -> Alcotest.fail ("undo failed: " ^ e)
+            | Ok _ ->
+                let restored_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+                Alcotest.(check string) "util.ml restored" "let greet prefix name = prefix ^ \" \" ^ name\n" restored_util))
+
+let test_e2e_label_arg_punned () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let oc = open_out_bin (Filename.concat root "lib/util.ml") in
+  output_string oc "let greet prefix name = prefix ^ \" \" ^ name\n";
+  close_out oc;
+
+  let oc = open_out_bin (Filename.concat root "bin/main.ml") in
+  output_string oc "let () = let prefix = \"Hi\" in print_endline (Sample_lib.Util.greet prefix \"World\")\n";
+  close_out oc;
+
+  match Reforge_app.Plan_refactoring.plan_label_arg ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"greet" ~arg_name:"prefix" ~label:"prefix" () with
+  | Error e -> Alcotest.fail ("planning failed: " ^ e)
+  | Ok (plan, _) ->
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error e -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure e)
+       | Ok _ ->
+           let new_main = In_channel.with_open_bin (Filename.concat root "bin/main.ml") In_channel.input_all in
+           Alcotest.(check string) "main.ml punned label" "let () = let prefix = \"Hi\" in print_endline (Sample_lib.Util.greet ~prefix \"World\")\n" new_main)
+
+let test_e2e_extract_constant () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let oc = open_out_bin (Filename.concat root "lib/util.ml") in
+  output_string oc "let msg1 () = \"Hello, world!\"\nlet msg2 () = \"Hello, world!\"\n";
+  close_out oc;
+
+  match Reforge_app.Plan_refactoring.plan_extract_constant ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~literal:"\"Hello, world!\"" ~const_name:"greeting" () with
+  | Error e -> Alcotest.fail ("planning failed: " ^ e)
+  | Ok (plan, _) ->
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error e -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure e)
+       | Ok _ ->
+           let new_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+           Alcotest.(check string) "util.ml with constant" "let greeting = \"Hello, world!\"\n\nlet msg1 () = greeting\nlet msg2 () = greeting\n" new_util;
+
+           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+            | Error e -> Alcotest.fail ("validate failed: " ^ e)
+            | Ok checks ->
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+
+           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+            | Error e -> Alcotest.fail ("undo failed: " ^ e)
+            | Ok _ ->
+                let restored_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+                Alcotest.(check string) "util.ml restored" "let msg1 () = \"Hello, world!\"\nlet msg2 () = \"Hello, world!\"\n" restored_util))
+
+let test_extract_constant_errors () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let oc = open_out_bin (Filename.concat root "lib/util.ml") in
+  output_string oc "let existing_val = 10\nlet msg () = \"Foo\"\n";
+  close_out oc;
+
+  (* Collision with existing definition *)
+  (match Reforge_app.Plan_refactoring.plan_extract_constant ~rt:runtime ~config ~root
+           ~file:"lib/util.ml" ~literal:"\"Foo\"" ~const_name:"existing_val" () with
+   | Error msg -> Alcotest.(check bool) "error has collision" true (String.starts_with ~prefix:"constant 'existing_val' already exists" msg)
+   | Ok _ -> Alcotest.fail "expected error for duplicate constant name");
+
+  (* Literal not found *)
+  (match Reforge_app.Plan_refactoring.plan_extract_constant ~rt:runtime ~config ~root
+           ~file:"lib/util.ml" ~literal:"\"Non_existent\"" ~const_name:"fresh_const" () with
+   | Error msg -> Alcotest.(check bool) "error has not found" true (String.starts_with ~prefix:"literal \"Non_existent\" not found" msg)
+   | Ok _ -> Alcotest.fail "expected error for non-existent literal");
+
+  (* Invalid constant identifier *)
+  (match Reforge_app.Plan_refactoring.plan_extract_constant ~rt:runtime ~config ~root
+           ~file:"lib/util.ml" ~literal:"\"Foo\"" ~const_name:"BadName" () with
+   | Error msg -> Alcotest.(check bool) "error has invalid name" true (String.starts_with ~prefix:"invalid OCaml identifier for constant" msg)
+   | Ok _ -> Alcotest.fail "expected error for invalid constant identifier")
+
 (* ------------------------------------------------------------------ *)
 (* Test runner                                                        *)
 (* ------------------------------------------------------------------ *)
@@ -671,6 +795,10 @@ let () =
           Alcotest.test_case "e2e rename-arg labelled" `Quick test_e2e_rename_arg_labelled;
           Alcotest.test_case "e2e remove-arg" `Quick test_e2e_remove_arg;
           Alcotest.test_case "argument refactoring errors" `Quick test_arg_refactoring_errors;
+          Alcotest.test_case "e2e label-arg" `Quick test_e2e_label_arg;
+          Alcotest.test_case "e2e label-arg punned" `Quick test_e2e_label_arg_punned;
+          Alcotest.test_case "e2e extract-constant" `Quick test_e2e_extract_constant;
+          Alcotest.test_case "extract-constant errors" `Quick test_extract_constant_errors;
           Alcotest.test_case "stale plan rejection" `Quick test_stale_plan_rejection;
         ] );
     ]

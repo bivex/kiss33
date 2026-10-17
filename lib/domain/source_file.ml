@@ -94,6 +94,17 @@ type value_def = {
   vd_body_loc : loc option;
 }
 
+type literal_kind =
+  | Lit_string of string
+  | Lit_int of string
+  | Lit_float of string
+  | Lit_char of char
+
+type literal_occurrence = {
+  lit_kind : literal_kind;
+  lit_loc : loc;
+}
+
 type analysis = {
   parse_ok : bool;
   parse_error : string option;
@@ -102,6 +113,7 @@ type analysis = {
   val_specs : value_def list;
   references : reference list;
   call_sites : call_site list;
+  literals : literal_occurrence list;
 }
 
 let head_of_reference (r : reference) : string option =
@@ -124,6 +136,7 @@ let empty_analysis = {
   val_specs = [];
   references = [];
   call_sites = [];
+  literals = [];
 }
 
 let failed_analysis (msg : string) : analysis = {
@@ -134,4 +147,5 @@ let failed_analysis (msg : string) : analysis = {
   val_specs = [];
   references = [];
   call_sites = [];
+  literals = [];
 }

@@ -126,6 +126,38 @@ let plan_remove_arg ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
       | Error e -> Error e
       | Ok path -> Ok (plan, path))
 
+let plan_label_arg ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
+    ~file ~fn_name ~arg_name ~label () : (Change_plan.t * string, string) result =
+  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let store_t = St.create ~root in
+  let id = St.next_plan_id store_t in
+  let command =
+    Printf.sprintf "reforge plan label-arg %s %s %s %s" file fn_name arg_name label
+  in
+  let* ctx = make_ctx ~rt ~config ~root ~id ~command in
+  match Refactoring.plan_label_arg ~ctx ~file ~fn_name ~arg_name ~label with
+  | Error e -> Error (Refactoring.pe_message e)
+  | Ok plan -> (
+      match St.save_plan store_t plan with
+      | Error e -> Error e
+      | Ok path -> Ok (plan, path))
+
+let plan_extract_constant ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
+    ~file ~literal ~const_name () : (Change_plan.t * string, string) result =
+  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let store_t = St.create ~root in
+  let id = St.next_plan_id store_t in
+  let command =
+    Printf.sprintf "reforge plan extract-constant %s %S %s" file literal const_name
+  in
+  let* ctx = make_ctx ~rt ~config ~root ~id ~command in
+  match Refactoring.plan_extract_constant ~ctx ~file ~literal ~const_name with
+  | Error e -> Error (Refactoring.pe_message e)
+  | Ok plan -> (
+      match St.save_plan store_t plan with
+      | Error e -> Error e
+      | Ok path -> Ok (plan, path))
+
 (* All plans with their derived status. *)
 let list_status ~(rt : Reforge_ports.Runtime.t) ~root () :
     ((Change_plan.t * Change_plan.status) list, string) result =

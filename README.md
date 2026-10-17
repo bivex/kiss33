@@ -126,6 +126,8 @@ reforge [COMMAND] [OPTIONS]
 | `reforge plan move-fn <SRC> <DST> <FN>` | Plan moving a top-level function to another module with `.mli` sync and call site updates. |
 | `reforge plan rename-arg <FILE> <FN> <OLD> <NEW>` | Plan renaming a function argument (positional, labeled `~x`, or optional `?x`) across definition, body usages, `.mli`, and call sites. |
 | `reforge plan remove-arg <FILE> <FN> <ARG>` | Plan removing an unused argument from definition, `.mli` signature, and call sites (rejects if used in body). |
+| `reforge plan label-arg <FILE> <FN> <ARG> <LABEL>` | Plan converting a positional parameter to labeled `~label` with `.mli` and call site rewrites. |
+| `reforge plan extract-constant <FILE> <LIT> <NAME>` | Plan extracting repeated magic literal strings/numbers into a top-level constant. |
 | `reforge preview [PLAN]` | Show byte-precise unified diffs and operations of a plan (defaults to latest). |
 | `reforge diff [--plan=PLAN]` | Show unified diffs for a plan or applied changes. |
 | `reforge apply [PLAN]` | Execute the plan transactionally with automatic backups. |
@@ -276,6 +278,40 @@ created .reforge/plans/plan-0005.json
     edit  lib/util.ml (1 edits)
     edit  lib/util.mli (1 edits)
 
+$ reforge apply
+$ reforge validate
+```
+
+#### Turn Positional Parameter to Labeled Parameter
+Convert a positional parameter into a labeled parameter (`~label`), resolving Primitive Obsession at call sites:
+
+```bash
+# Convert positional parameter `prefix` to labeled `~prefix`
+$ reforge plan label-arg lib/util.ml greet prefix prefix
+created .reforge/plans/plan-0006.json
+  label param prefix as ~prefix in lib/util.ml:greet (3 files edited)
+  operations:
+    edit  bin/main.ml (1 edits)
+    edit  lib/util.ml (1 edits)
+    edit  lib/util.mli (1 edits)
+
+$ reforge apply
+$ reforge validate
+```
+
+### 8. Clean Code: Extract Magic Literals into Named Constants
+
+Extract repeated string, int, or float literals into a top-level constant value:
+
+```bash
+# Extract repeated string literal into top-level constant
+$ reforge plan extract-constant lib/util.ml "Hello, world!" default_greeting
+created .reforge/plans/plan-0007.json
+  extract constant default_greeting = "Hello, world!" in lib/util.ml (2 occurrences replaced)
+  operations:
+    edit  lib/util.ml (3 edits)
+
+$ reforge preview
 $ reforge apply
 $ reforge validate
 ```

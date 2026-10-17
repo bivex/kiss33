@@ -49,6 +49,10 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
       :: !defs
   in
   let call_sites = ref [] in
+  let literals = ref [] in
+  let push_literal kind loc =
+    literals := { Source_file.lit_kind = kind; lit_loc = loc } :: !literals
+  in
   let push_val_def name loc full_loc params body_loc =
     if !prefix = [] then (* only top-level definitions in module scope *)
       value_defs :=
@@ -243,6 +247,17 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
            | _ -> default.signature_item it item);
       expr =
         (fun it e ->
+           (match (e.Parsetree.pexp_desc : Parsetree.expression_desc) with
+            | Pexp_constant c ->
+                let lk =
+                  match c.Parsetree.pconst_desc with
+                  | Pconst_string (s, _, _) -> Some (Source_file.Lit_string s)
+                  | Pconst_integer (s, _) -> Some (Source_file.Lit_int s)
+                  | Pconst_float (s, _) -> Some (Source_file.Lit_float s)
+                  | Pconst_char ch -> Some (Source_file.Lit_char ch)
+                in
+                Option.iter (fun k -> push_literal k (loc_of c.Parsetree.pconst_loc)) lk
+            | _ -> ());
            match (e.Parsetree.pexp_desc : Parsetree.expression_desc) with
            | Pexp_ident lid -> push_lident lid Source_file.Ref_value
            | Pexp_apply (fn, args) ->
@@ -356,6 +371,7 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
        val_specs = List.rev !val_specs;
        references = List.rev !refs;
        call_sites = List.rev !call_sites;
+       literals = List.rev !literals;
      }
    with
   | Syntaxerr.Error err ->

@@ -6,6 +6,8 @@ type intent =
   | Move_fn of { src : string; dst : string; fn_name : string }
   | Rename_arg of { file : string; fn_name : string; old_arg : string; new_arg : string }
   | Remove_arg of { file : string; fn_name : string; arg_name : string }
+  | Label_arg of { file : string; fn_name : string; arg_name : string; label : string }
+  | Extract_constant of { file : string; literal : string; const_name : string }
 
 type plan_error =
   | Src_not_found of string
@@ -20,7 +22,11 @@ type plan_error =
   | Arg_not_found of string * string * string
   | Arg_collision of string * string * string
   | Arg_in_use of string * string * string
+  | Arg_already_labelled of string * string * string
   | Invalid_arg_name of string
+  | Const_collision of string * string
+  | Literal_not_found of string * string
+  | Invalid_const_name of string
 
 val pe_message : plan_error -> string
 
@@ -76,3 +82,21 @@ val plan_remove_arg :
   arg_name:string ->
   (Change_plan.t, plan_error) result
 (** Remove an unused parameter from a function definition, interface, and call sites. *)
+
+val plan_label_arg :
+  ctx:ctx ->
+  file:string ->
+  fn_name:string ->
+  arg_name:string ->
+  label:string ->
+  (Change_plan.t, plan_error) result
+(** Convert a positional function parameter into a labeled parameter (~label),
+    updating definition, .mli interface, and call sites across the codebase. *)
+
+val plan_extract_constant :
+  ctx:ctx ->
+  file:string ->
+  literal:string ->
+  const_name:string ->
+  (Change_plan.t, plan_error) result
+(** Extract repeated literal expressions into a named constant at file top-level. *)

@@ -51,10 +51,7 @@
 > *"Идеальное число аргументов функции равно нулю (niladic). Затем идет один (monadic), два (dyadic). Трех аргументов (triadic) следует по возможности избегать." — Clean Code*
 
 - [x] **`plan remove-arg <FILE> <FN> <ARG>`** — безопасное удаление неиспользуемого аргумента с валидацией отсутствия обращений в теле. *(Реализовано)*
-- [ ] **`plan label-arg <FILE> <FN> <POS> <LABEL>`**
-  - Преобразование позиционного аргумента в именованный (`~label`).
-  - Решает проблему "Primitive Obsession" и путаницы, когда у функции 2+ аргумента одного типа (например, `create_rect 10 20` $\to$ `create_rect ~width:10 ~height:20`).
-  - Автоматическое обновление всех call sites в репозитории с сохранением порядка или выведением меток.
+- [x] **`plan label-arg <FILE> <FN> <ARG> <LABEL>`** — преобразование позиционного аргумента в именованный (`~label`) с обновлением сигнатур `.mli` и всех мест вызовов (включая punning). *(Реализовано)*
 - [ ] **`plan unlabel-arg <FILE> <FN> <LABEL>`**
   - Обратная операция: перевод именованного аргумента в позиционный, если метка избыточна.
 - [ ] **`plan introduce-param-object <FILE> <FN> --args <A,B,C> --record <TYPE_NAME>`**
@@ -89,8 +86,7 @@
   - Поиск операторов `open Module`, ни один идентификатор из которых не используется в файле, и их безопасное удаление.
 - [ ] **`plan qualify-open <FILE> <MODULE>`**
   - Замена глобального `open Big_module` на локальные `let open Big_module in ...` или явные квалификаторы `Big_module.func`, предотвращая загрязнение пространства имен (Namespace Pollution).
-- [ ] **`plan extract-constant <FILE> <LITERAL> <CONST_NAME>`**
-  - Поиск повторяющихся строковых или числовых литералов (Magic Numbers / Magic Strings) и вынос их в именованное значение `let const_name = ...`.
+- [x] **`plan extract-constant <FILE> <LITERAL> <CONST_NAME>`** — поиск повторяющихся строковых или числовых литералов (Magic Numbers / Magic Strings) и вынос их в именованное значение `let const_name = ...`. *(Реализовано)*
 
 ---
 
