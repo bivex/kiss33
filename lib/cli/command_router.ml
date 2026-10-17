@@ -327,6 +327,15 @@ let run_inspect ~rt ~json root file =
                               ("line", `Int m.Source_file.md_loc.Source_file.start_lnum) ])
                        analysis.Source_file.module_defs)
                 in
+                let fns =
+                  `List
+                    (List.map
+                       (fun vd ->
+                          `Assoc
+                            [ ("name", `String vd.Source_file.vd_name);
+                              ("line", `Int vd.Source_file.vd_loc.Source_file.start_lnum) ])
+                       analysis.Source_file.value_defs)
+                in
                 let refs =
                   `List
                     (List.map
@@ -359,6 +368,7 @@ let run_inspect ~rt ~json root file =
                          | Some m -> `String m );
                        ("module_forms", forms_json);
                        ("modules", mods);
+                       ("functions", fns);
                        ("references", refs);
                      ])
               end
@@ -379,8 +389,14 @@ let run_inspect ~rt ~json root file =
                   (List.length analysis.Source_file.module_defs);
                 analysis.Source_file.module_defs
                 |> List.iter (fun m ->
-                       Printf.printf "    %s (line %d)\n" m.Source_file.md_name
+                       Printf.printf "    module %s (line %d)\n" m.Source_file.md_name
                          m.Source_file.md_loc.Source_file.start_lnum);
+                Printf.printf "  functions defined: %d\n"
+                  (List.length analysis.Source_file.value_defs);
+                analysis.Source_file.value_defs
+                |> List.iter (fun vd ->
+                       Printf.printf "    fn %s (line %d)\n" vd.Source_file.vd_name
+                         vd.Source_file.vd_loc.Source_file.start_lnum);
                 Printf.printf "  references: %d\n"
                   (List.length analysis.Source_file.references)
               end;
@@ -474,34 +490,70 @@ let plan_json (p : Change_plan.t) : Yojson.Basic.t =
       ("warnings", `List (List.map (fun w -> `String w) p.Change_plan.cp_warnings));
     ]
 
+let emit_plan_created ~command ~json plan path =
+  if json then
+    emit_json ~command
+      (`Assoc [ ("plan", plan_json plan); ("path", `String path) ])
+  else begin
+    Printf.printf "created %s\n" path;
+    Printf.printf "  %s\n" plan.Change_plan.cp_description;
+    Printf.printf "  operations:\n";
+    List.iter
+      (function
+        | Change_plan.Op_create_dir { path } -> Printf.printf "    mkdir %s\n" path
+        | Change_plan.Op_move_file { src; dst; _ } ->
+            Printf.printf "    move  %s -> %s\n" src dst
+        | Change_plan.Op_edit_file { path; edits; _ } ->
+            Printf.printf "    edit  %s (%d edits)\n" path (List.length edits)
+        | Change_plan.Op_write_file { path; _ } ->
+            Printf.printf "    write %s\n" path)
+      plan.Change_plan.cp_ops;
+    List.iter (fun w -> Printf.printf "  warning: %s\n" w) plan.Change_plan.cp_warnings;
+    Printf.printf "next: reforge preview %s\n" path
+  end;
+  0
+
 let run_plan_move ~rt ~json ~plain root src dst =
+  if src = "" || dst = "" then begin
+    let msg = "missing required arguments: SRC DST" in
+    if json then (emit_error_json ~command:"plan move" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
   let config = Cli_config.load ~rt ~root in
   match App.Plan_refactoring.plan_move ~rt ~config ~root ~src ~dst ~semantic:(not plain) () with
   | Error e ->
       if json then (emit_error_json ~command:"plan move" e; exit exit_usage_code)
       else (prerr_endline ("error: " ^ e); exit exit_usage_code)
   | Ok (plan, path) ->
-      if json then
-        emit_json ~command:"plan move"
-          (`Assoc [ ("plan", plan_json plan); ("path", `String path) ])
-      else begin
-        Printf.printf "created %s\n" path;
-        Printf.printf "  %s\n" plan.Change_plan.cp_description;
-        Printf.printf "  operations:\n";
-        List.iter
-          (function
-            | Change_plan.Op_create_dir { path } -> Printf.printf "    mkdir %s\n" path
-            | Change_plan.Op_move_file { src; dst; _ } ->
-                Printf.printf "    move  %s -> %s\n" src dst
-            | Change_plan.Op_edit_file { path; edits; _ } ->
-                Printf.printf "    edit  %s (%d edits)\n" path (List.length edits)
-            | Change_plan.Op_write_file { path; _ } ->
-                Printf.printf "    write %s\n" path)
-          plan.Change_plan.cp_ops;
-        List.iter (fun w -> Printf.printf "  warning: %s\n" w) plan.Change_plan.cp_warnings;
-        Printf.printf "next: reforge preview %s\n" path
-      end;
-      0
+      emit_plan_created ~command:"plan move" ~json plan path
+
+let run_plan_rename_fn ~rt ~json root file old_name new_name =
+  if file = "" || old_name = "" || new_name = "" then begin
+    let msg = "missing required arguments: FILE OLD_NAME NEW_NAME" in
+    if json then (emit_error_json ~command:"plan rename-fn" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_rename_fn ~rt ~config ~root ~file ~old_name ~new_name () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan rename-fn" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan rename-fn" ~json plan path
+
+let run_plan_move_fn ~rt ~json root src dst fn_name =
+  if src = "" || dst = "" || fn_name = "" then begin
+    let msg = "missing required arguments: SRC DST FN" in
+    if json then (emit_error_json ~command:"plan move-fn" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_move_fn ~rt ~config ~root ~src ~dst ~fn_name () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan move-fn" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan move-fn" ~json plan path
 
 let load_plan_or_exit ~rt ~json ~root ~command ref =
   let module St = (val rt.Reforge_ports.Runtime.store) in
@@ -861,9 +913,27 @@ let run ~rt ~argv () : int =
        and+ dst = Arg.(value & pos 1 string "" & info [] ~docv:"DST" ~doc:"Destination path (must not exist).") in
        run_plan_move ~rt ~json:j ~plain:p r src dst)
   in
+  let plan_rename_fn_cmd =
+    mk "rename-fn" "Plan renaming a top-level function across the codebase."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"File containing the function definition.")
+       and+ old_name = Arg.(value & pos 1 string "" & info [] ~docv:"OLD_NAME" ~doc:"Current name of the function.")
+       and+ new_name = Arg.(value & pos 2 string "" & info [] ~docv:"NEW_NAME" ~doc:"New name of the function.") in
+       run_plan_rename_fn ~rt ~json:j r file old_name new_name)
+  in
+  let plan_move_fn_cmd =
+    mk "move-fn" "Plan moving a top-level function from one module to another."
+      (let+ r = root
+       and+ j = json
+       and+ src = Arg.(value & pos 0 string "" & info [] ~docv:"SRC" ~doc:"Source module file (.ml).")
+       and+ dst = Arg.(value & pos 1 string "" & info [] ~docv:"DST" ~doc:"Destination module file (.ml).")
+       and+ fn = Arg.(value & pos 2 string "" & info [] ~docv:"FN" ~doc:"Function name to move.") in
+       run_plan_move_fn ~rt ~json:j r src dst fn)
+  in
   let plan_cmd =
     Cmd.group (Cmd.info "plan" ~doc:"Create change plans.")
-      [ plan_move_cmd ]
+      [ plan_move_cmd; plan_rename_fn_cmd; plan_move_fn_cmd ]
   in
   let preview_cmd =
     mk "preview" "Show a plan's operations and diffs."

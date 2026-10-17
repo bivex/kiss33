@@ -35,6 +35,8 @@ let loc_of (l : Location.t) : Source_file.loc =
 let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
     Source_file.analysis =
   let defs : Source_file.module_def list ref = ref [] in
+  let value_defs : Source_file.value_def list ref = ref [] in
+  let val_specs : Source_file.value_def list ref = ref [] in
   let refs : Source_file.reference list ref = ref [] in
   let prefix : string list ref = ref [] in
   let push_def name loc kind =
@@ -46,13 +48,38 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
       }
       :: !defs
   in
+  let push_val_def name loc full_loc =
+    if !prefix = [] then (* only top-level definitions in module scope *)
+      value_defs :=
+        {
+          Source_file.vd_name = name;
+          vd_loc = loc;
+          vd_full_loc = full_loc;
+        }
+        :: !value_defs
+  in
+  let push_val_spec name loc full_loc =
+    if !prefix = [] then
+      val_specs :=
+        {
+          Source_file.vd_name = name;
+          vd_loc = loc;
+          vd_full_loc = full_loc;
+        }
+        :: !val_specs
+  in
   let push_ref segments loc ctx =
     if segments <> [] then
       refs := { Source_file.ref_segments = segments; ref_loc = loc; ref_context = ctx } :: !refs
   in
+  let rec flatten_lident = function
+    | Longident.Lident s -> [ s ]
+    | Longident.Ldot (li, s) -> flatten_lident li.txt @ [ s.txt ]
+    | Longident.Lapply (li1, li2) -> flatten_lident li1.txt @ flatten_lident li2.txt
+  in
   let push_lident (lid : Longident.t Asttypes.loc) ctx =
     if not lid.loc.Location.loc_ghost then
-      push_ref (Longident.flatten lid.Asttypes.txt) (loc_of lid.Asttypes.loc) ctx
+      push_ref (flatten_lident lid.Asttypes.txt) (loc_of lid.Asttypes.loc) ctx
   in
   let iterator =
     let open Ast_iterator in
@@ -67,6 +94,21 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
       structure_item =
         (fun it item ->
            match (item.Parsetree.pstr_desc : Parsetree.structure_item_desc) with
+           | Pstr_value (_rec_flag, bindings) ->
+               List.iter
+                 (fun vb ->
+                    let rec extract_var pat =
+                      match (pat.Parsetree.ppat_desc : Parsetree.pattern_desc) with
+                      | Ppat_var name -> Some (name.Asttypes.txt, loc_of name.Asttypes.loc)
+                      | Ppat_constraint (p, _) -> extract_var p
+                      | _ -> None
+                    in
+                    match extract_var vb.Parsetree.pvb_pat with
+                    | Some (name, loc) ->
+                        push_val_def name loc (loc_of item.Parsetree.pstr_loc)
+                    | None -> ())
+                 bindings;
+               default.structure_item it item
            | Pstr_module mb -> (
                let name = mb.Parsetree.pmb_name.Asttypes.txt in
                (match name with
@@ -100,6 +142,11 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
       signature_item =
         (fun it item ->
            match (item.Parsetree.psig_desc : Parsetree.signature_item_desc) with
+           | Psig_value vd ->
+               push_val_spec vd.Parsetree.pval_name.Asttypes.txt
+                 (loc_of vd.Parsetree.pval_name.Asttypes.loc)
+                 (loc_of item.Parsetree.psig_loc);
+               default.signature_item it item
            | Psig_module md -> (
                (match md.Parsetree.pmd_name.Asttypes.txt with
                 | Some name ->
@@ -204,6 +251,8 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
        Source_file.parse_ok = true;
        parse_error = None;
        module_defs = List.rev !defs;
+       value_defs = List.rev !value_defs;
+       val_specs = List.rev !val_specs;
        references = List.rev !refs;
      }
    with

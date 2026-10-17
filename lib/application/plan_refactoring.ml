@@ -62,6 +62,38 @@ let plan_move ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root ~src ~d
       | Error e -> Error e
       | Ok path -> Ok (plan, path))
 
+let plan_rename_fn ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
+    ~file ~old_name ~new_name () : (Change_plan.t * string, string) result =
+  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let store_t = St.create ~root in
+  let id = St.next_plan_id store_t in
+  let command =
+    Printf.sprintf "reforge plan rename-fn %s %s %s" file old_name new_name
+  in
+  let* ctx = make_ctx ~rt ~config ~root ~id ~command in
+  match Refactoring.plan_rename_fn ~ctx ~file ~old_name ~new_name with
+  | Error e -> Error (Refactoring.pe_message e)
+  | Ok plan -> (
+      match St.save_plan store_t plan with
+      | Error e -> Error e
+      | Ok path -> Ok (plan, path))
+
+let plan_move_fn ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
+    ~src ~dst ~fn_name () : (Change_plan.t * string, string) result =
+  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let store_t = St.create ~root in
+  let id = St.next_plan_id store_t in
+  let command =
+    Printf.sprintf "reforge plan move-fn %s %s %s" src dst fn_name
+  in
+  let* ctx = make_ctx ~rt ~config ~root ~id ~command in
+  match Refactoring.plan_move_fn ~ctx ~src ~dst ~fn_name with
+  | Error e -> Error (Refactoring.pe_message e)
+  | Ok plan -> (
+      match St.save_plan store_t plan with
+      | Error e -> Error e
+      | Ok path -> Ok (plan, path))
+
 (* All plans with their derived status. *)
 let list_status ~(rt : Reforge_ports.Runtime.t) ~root () :
     ((Change_plan.t * Change_plan.status) list, string) result =

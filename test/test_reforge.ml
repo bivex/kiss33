@@ -48,7 +48,28 @@ let test_source_analyzer () =
     List.exists (fun (r : Source_file.reference) ->
       r.ref_segments = [ "M"; "Sub"; "y" ]) refs
   in
-  Alcotest.(check bool) "has M.Sub.y" true has_nested_ref
+  Alcotest.(check bool) "has M.Sub.y" true has_nested_ref;
+  let fn_names = List.map (fun (vd : Source_file.value_def) -> vd.vd_name) a.Source_file.value_defs in
+  Alcotest.(check (list string)) "value defs" [ "z" ] fn_names
+
+let test_function_analyzer () =
+  let module An = (val Reforge_infra.Ocaml_analyzer.ocaml_analyzer) in
+  let an = An.create () in
+  let ml_content =
+    "let f x = x + 1\nlet rec g y = if y <= 0 then 0 else g (y - 1)\nlet a, b = (1, 2)\n"
+  in
+  let a_ml = An.analyze an ~path:"lib/math.ml" ~content:ml_content in
+  Alcotest.(check bool) "ml parse ok" true a_ml.Source_file.parse_ok;
+  let fn_names = List.map (fun (vd : Source_file.value_def) -> vd.vd_name) a_ml.Source_file.value_defs in
+  Alcotest.(check (list string)) "value defs found" [ "f"; "g" ] fn_names;
+
+  let mli_content =
+    "val f : int -> int\nval g : int -> int\n"
+  in
+  let a_mli = An.analyze an ~path:"lib/math.mli" ~content:mli_content in
+  Alcotest.(check bool) "mli parse ok" true a_mli.Source_file.parse_ok;
+  let val_names = List.map (fun (vs : Source_file.value_def) -> vs.vd_name) a_mli.Source_file.val_specs in
+  Alcotest.(check (list string)) "val specs found" [ "f"; "g" ] val_names
 
 let test_dune_analyzer () =
   let module An = (val Reforge_infra.Ocaml_analyzer.ocaml_analyzer) in
@@ -108,6 +129,8 @@ let test_cycles () =
       Source_file.parse_ok = true;
       parse_error = None;
       module_defs = [];
+      value_defs = [];
+      val_specs = [];
       references = [ { ref_segments = [ "B"; "foo" ]; ref_loc = loc; ref_context = Source_file.Ref_value } ];
     }
   in
@@ -116,6 +139,8 @@ let test_cycles () =
       Source_file.parse_ok = true;
       parse_error = None;
       module_defs = [];
+      value_defs = [];
+      val_specs = [];
       references = [ { ref_segments = [ "C"; "bar" ]; ref_loc = loc; ref_context = Source_file.Ref_value } ];
     }
   in
@@ -124,6 +149,8 @@ let test_cycles () =
       Source_file.parse_ok = true;
       parse_error = None;
       module_defs = [];
+      value_defs = [];
+      val_specs = [];
       references = [ { ref_segments = [ "A"; "baz" ]; ref_loc = loc; ref_context = Source_file.Ref_value } ];
     }
   in
@@ -309,6 +336,138 @@ let test_stale_plan_rejection () =
       | Error e -> Alcotest.fail ("expected Stale error, got: " ^ Reforge_app.Apply_refactoring.pp_failure e)
       | Ok _ -> Alcotest.fail "apply succeeded despite stale precondition"
 
+let test_e2e_rename_fn () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  (* In util.ml, have an internal call to hello as well *)
+  let util_path = Filename.concat root "lib/util.ml" in
+  let oc = open_out_bin util_path in
+  output_string oc "let hello () = \"world\"\nlet greet () = hello ()\n";
+  close_out oc;
+
+  (* 1. Plan rename-fn lib/util.ml hello greet_msg *)
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_rename_fn ~rt:runtime ~config ~root
+      ~file:"lib/util.ml" ~old_name:"hello" ~new_name:"greet_msg" ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_rename_fn failed: " ^ e)
+  | Ok (plan, _path) ->
+      let edited_files =
+        List.filter_map
+          (function
+            | Change_plan.Op_edit_file { path; _ } -> Some path
+            | _ -> None)
+          plan.cp_ops
+        |> List.sort compare
+      in
+      Alcotest.(check (list string)) "edited files"
+        [ "bin/main.ml"; "lib/util.ml"; "lib/util.mli" ] edited_files;
+
+      (* 2. Apply *)
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       | Ok applied ->
+           Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
+           let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+           let mli_c = In_channel.with_open_bin (Filename.concat root "lib/util.mli") In_channel.input_all in
+           let main_c = In_channel.with_open_bin (Filename.concat root "bin/main.ml") In_channel.input_all in
+           Alcotest.(check bool) "util.ml defines greet_msg" true (String.starts_with ~prefix:"let greet_msg ()" util_c);
+           Alcotest.(check bool) "util.ml calls greet_msg" true (String.ends_with ~suffix:"greet () = greet_msg ()\n" util_c);
+           Alcotest.(check bool) "util.mli has val greet_msg" true (String.starts_with ~prefix:"val greet_msg" mli_c);
+           Alcotest.(check bool) "main.ml calls greet_msg" true
+             (try ignore (String.index main_c 'g'); true with Not_found -> false);
+
+           (* 3. Validate *)
+           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+            | Error e -> Alcotest.fail ("validate failed: " ^ e)
+            | Ok checks ->
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+
+           (* 4. Undo *)
+           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+            | Error e -> Alcotest.fail ("undo failed: " ^ e)
+            | Ok log ->
+                Alcotest.(check bool) "undo has actions" true (List.length log > 0);
+                let restored_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+                Alcotest.(check bool) "util.ml restored" true (String.starts_with ~prefix:"let hello ()" restored_util)))
+
+let test_e2e_move_fn () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  (* Create lib/extra.ml and lib/extra.mli *)
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/dune" "(library (name sample_lib) (modules util extra))\n";
+  write "lib/extra.ml" "let dummy = 1\n";
+  write "lib/extra.mli" "val dummy : int\n";
+
+  (* 1. Plan move-fn lib/util.ml lib/extra.ml hello *)
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_move_fn ~rt:runtime ~config ~root
+      ~src:"lib/util.ml" ~dst:"lib/extra.ml" ~fn_name:"hello" ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_move_fn failed: " ^ e)
+  | Ok (plan, _path) ->
+      (* 2. Apply *)
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       | Ok applied ->
+           Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
+           let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+           let extra_c = In_channel.with_open_bin (Filename.concat root "lib/extra.ml") In_channel.input_all in
+           let mli_util_c = In_channel.with_open_bin (Filename.concat root "lib/util.mli") In_channel.input_all in
+           let mli_extra_c = In_channel.with_open_bin (Filename.concat root "lib/extra.mli") In_channel.input_all in
+           let main_c = In_channel.with_open_bin (Filename.concat root "bin/main.ml") In_channel.input_all in
+           Alcotest.(check bool) "hello cut from util.ml" false (String.contains util_c 'h');
+           Alcotest.(check bool) "hello cut from util.mli" false (String.contains mli_util_c 'h');
+           Alcotest.(check bool) "hello pasted into extra.ml" true (try ignore (String.index extra_c 'h'); true with Not_found -> false);
+           Alcotest.(check bool) "val hello pasted into extra.mli" true (try ignore (String.index mli_extra_c 'h'); true with Not_found -> false);
+           Alcotest.(check bool) "main.ml rewritten to Sample_lib.Extra.hello" true
+             (try ignore (String.index main_c 'E'); true with Not_found -> false);
+
+           (* 3. Validate *)
+           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+            | Error e -> Alcotest.fail ("validate failed: " ^ e)
+            | Ok checks ->
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+
+           (* 4. Undo *)
+           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+            | Error e -> Alcotest.fail ("undo failed: " ^ e)
+            | Ok log ->
+                Alcotest.(check bool) "undo has actions" true (List.length log > 0);
+                let restored_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+                Alcotest.(check bool) "hello restored in util.ml" true (String.starts_with ~prefix:"let hello ()" restored_util)))
+
+let test_fn_refactoring_errors () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  (* Fn not found *)
+  (match Reforge_app.Plan_refactoring.plan_rename_fn ~rt:runtime ~config ~root ~file:"lib/util.ml" ~old_name:"no_such_fn" ~new_name:"foo" () with
+   | Error msg -> Alcotest.(check bool) "error has not found" true (String.starts_with ~prefix:"function 'no_such_fn' not found" msg)
+   | Ok _ -> Alcotest.fail "expected error for non-existent function");
+
+  (* Invalid name *)
+  (match Reforge_app.Plan_refactoring.plan_rename_fn ~rt:runtime ~config ~root ~file:"lib/util.ml" ~old_name:"hello" ~new_name:"InvalidCapital" () with
+   | Error msg -> Alcotest.(check bool) "error has invalid name" true (String.starts_with ~prefix:"invalid OCaml identifier" msg)
+   | Ok _ -> Alcotest.fail "expected error for invalid function name");
+
+  (* Move src = dst *)
+  (match Reforge_app.Plan_refactoring.plan_move_fn ~rt:runtime ~config ~root ~src:"lib/util.ml" ~dst:"lib/util.ml" ~fn_name:"hello" () with
+   | Error msg -> Alcotest.(check bool) "error src=dst" true (String.starts_with ~prefix:"source and destination are the same" msg)
+   | Ok _ -> Alcotest.fail "expected error for src=dst")
+
 (* ------------------------------------------------------------------ *)
 (* Test runner                                                        *)
 (* ------------------------------------------------------------------ *)
@@ -320,6 +479,7 @@ let () =
       ( "analyzer",
         [
           Alcotest.test_case "ocaml AST analysis" `Quick test_source_analyzer;
+          Alcotest.test_case "function AST analysis" `Quick test_function_analyzer;
           Alcotest.test_case "dune sexp analysis" `Quick test_dune_analyzer;
         ] );
       ("cycles", [ Alcotest.test_case "Tarjan SCC cycle detection" `Quick test_cycles ]);
@@ -331,6 +491,9 @@ let () =
       ( "integration",
         [
           Alcotest.test_case "e2e plan, apply, validate, undo" `Quick test_e2e_refactoring;
+          Alcotest.test_case "e2e rename-fn" `Quick test_e2e_rename_fn;
+          Alcotest.test_case "e2e move-fn" `Quick test_e2e_move_fn;
+          Alcotest.test_case "function refactoring errors" `Quick test_fn_refactoring_errors;
           Alcotest.test_case "stale plan rejection" `Quick test_stale_plan_rejection;
         ] );
     ]

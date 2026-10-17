@@ -122,6 +122,8 @@ reforge [COMMAND] [OPTIONS]
 | Command | Description |
 |---|---|
 | `reforge plan move <SRC> <DST>` | Generate a change plan to move/rename a file or directory with semantic rewrites. |
+| `reforge plan rename-fn <FILE> <OLD> <NEW>` | Plan renaming a top-level function across definition, `.mli` interface, and all call sites repo-wide. |
+| `reforge plan move-fn <SRC> <DST> <FN>` | Plan moving a top-level function to another module with `.mli` sync and call site updates. |
 | `reforge preview [PLAN]` | Show byte-precise unified diffs and operations of a plan (defaults to latest). |
 | `reforge diff [--plan=PLAN]` | Show unified diffs for a plan or applied changes. |
 | `reforge apply [PLAN]` | Execute the plan transactionally with automatic backups. |
@@ -204,6 +206,40 @@ restored bin/main.ml
 restored lib/dune
 moved back lib/common.mli -> lib/util.mli
 moved back lib/common.ml -> lib/util.ml
+```
+
+### 6. Function-Level Refactoring
+
+Rename a top-level function across its definition, `.mli` val spec, and all call sites in the repository:
+```bash
+# Plan rename
+$ reforge plan rename-fn lib/util.ml hello greet_msg
+created .reforge/plans/plan-0002.json
+  rename fn hello -> greet_msg in lib/util.ml (3 files edited)
+  operations:
+    edit  bin/main.ml (1 edits)
+    edit  lib/util.ml (2 edits)
+    edit  lib/util.mli (1 edits)
+
+# Preview and apply
+$ reforge preview
+$ reforge apply
+$ reforge validate
+```
+
+Move a function from one module to another:
+```bash
+# Plan function move
+$ reforge plan move-fn lib/util.ml lib/extra.ml greet_msg
+created .reforge/plans/plan-0003.json
+  move fn greet_msg from lib/util.ml to lib/extra.ml (3 files edited)
+  operations:
+    edit  bin/main.ml (1 edits)
+    edit  lib/extra.ml (1 edits)
+    edit  lib/util.ml (1 edits)
+
+$ reforge apply
+$ reforge validate
 ```
 
 ---

@@ -63,10 +63,18 @@ type reference = {
   ref_context : ref_context;
 }
 
+type value_def = {
+  vd_name : string;
+  vd_loc : loc;
+  vd_full_loc : loc;
+}
+
 type analysis = {
   parse_ok : bool;
   parse_error : string option;
   module_defs : module_def list;
+  value_defs : value_def list;
+  val_specs : value_def list;
   references : reference list;
 }
 
@@ -86,6 +94,8 @@ let empty_analysis = {
   parse_ok = true;
   parse_error = None;
   module_defs = [];
+  value_defs = [];
+  val_specs = [];
   references = [];
 }
 
@@ -93,5 +103,7 @@ let failed_analysis (msg : string) : analysis = {
   parse_ok = false;
   parse_error = Some msg;
   module_defs = [];
+  value_defs = [];
+  val_specs = [];
   references = [];
 }
