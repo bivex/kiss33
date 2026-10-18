@@ -3,119 +3,102 @@
 open Refactoring_types
 open Refactoring_helpers
 
-let plan_extract_constant ~(ctx : ctx) ~(file : string) ~(literal : string) ~(const_name : string) :
-    (Change_plan.t, plan_error) result =
-  let file = Path.normalize file in
+let strip_quotes s =
+  let len = String.length s in
+  if len >= 2 && s.[0] = '"' && s.[len - 1] = '"' then
+    String.sub s 1 (len - 2)
+  else s
+
+let match_char_lit raw_lit c =
+  String.make 1 c = raw_lit
+  || (String.length raw_lit = 3 && raw_lit.[0] = '\'' && raw_lit.[2] = '\'' && raw_lit.[1] = c)
+
+let match_literal ~clean_lit ~raw_lit (lit : Source_file.literal_occurrence) =
+  match lit.lit_kind with
+  | Source_file.Lit_string s -> s = clean_lit || s = raw_lit
+  | Source_file.Lit_int s | Source_file.Lit_float s -> s = raw_lit
+  | Source_file.Lit_char c -> match_char_lit raw_lit c
+
+let find_matching_literals ~literal analysis =
+  let clean_lit = strip_quotes literal in
+  List.filter (match_literal ~clean_lit ~raw_lit:literal) analysis.Source_file.literals
+
+let find_last_open_offset ~before_offset references =
+  List.fold_left
+    (fun acc (r : Source_file.reference) ->
+       if r.ref_context = Source_file.Ref_open && r.ref_loc.end_off < before_offset then
+         max acc r.ref_loc.end_off
+       else acc)
+    0 references
+
+let find_next_newline content from_idx =
+  let len = String.length content in
+  let rec loop idx =
+    if idx >= len then idx
+    else if content.[idx] = '\n' then idx + 1
+    else loop (idx + 1)
+  in
+  loop from_idx
+
+let compute_insertion ~content ~const_name ~raw_literal ~first_offset references =
+  let max_open = find_last_open_offset ~before_offset:first_offset references in
+  if max_open > 0 then
+    let at = find_next_newline content max_open in
+    (at, Printf.sprintf "\nlet %s = %s\n" const_name raw_literal)
+  else
+    (0, Printf.sprintf "let %s = %s\n\n" const_name raw_literal)
+
+let make_replace_edit const_name (m : Source_file.literal_occurrence) =
+  {
+    Change_plan.e_start_off = m.lit_loc.start_off;
+    e_end_off = m.lit_loc.end_off;
+    e_start_line = m.lit_loc.start_lnum;
+    e_end_line = m.lit_loc.end_lnum;
+    e_replacement = const_name;
+    e_reason = Printf.sprintf "replace literal with %s" const_name;
+  }
+
+let validate_extract_constant ~ctx ~file ~const_name =
+  let ( let* ) = Result.bind in
   if not (is_valid_ident const_name) then
     Error (Invalid_const_name const_name)
   else
-    match Repository.find_file ctx.repo file with
-    | None -> Error (Src_not_found file)
-    | Some _ ->
-        match ctx.analysis_of file, ctx.content_of file with
-        | None, _ | _, None -> Error (Missing_content file)
-        | Some file_analysis, Some file_content ->
-            if List.exists (fun vd -> vd.Source_file.vd_name = const_name) file_analysis.Source_file.value_defs then
-              Error (Const_collision (file, const_name))
-            else
-              let clean_lit =
-                let len = String.length literal in
-                if len >= 2 && literal.[0] = '"' && literal.[len - 1] = '"' then
-                  String.sub literal 1 (len - 2)
-                else literal
-              in
-              let matches =
-                List.filter
-                  (fun (lit : Source_file.literal_occurrence) ->
-                     match lit.lit_kind with
-                     | Source_file.Lit_string s -> s = clean_lit || s = literal
-                     | Source_file.Lit_int s -> s = literal
-                     | Source_file.Lit_float s -> s = literal
-                     | Source_file.Lit_char c ->
-                         String.make 1 c = literal
-                         || (String.length literal = 3 && literal.[0] = '\'' && literal.[2] = '\'' && literal.[1] = c))
-                  file_analysis.Source_file.literals
-              in
-              match matches with
-              | [] -> Error (Literal_not_found (file, literal))
-              | first_match :: _ ->
-                  let raw_literal =
-                    String.sub file_content first_match.lit_loc.start_off
-                      (first_match.lit_loc.end_off - first_match.lit_loc.start_off)
-                  in
-                (* Find insertion point: after the last open before the first match, or before first val_def, or 0 *)
-                let max_open_off =
-                  List.fold_left
-                    (fun acc (r : Source_file.reference) ->
-                       if r.ref_context = Source_file.Ref_open && r.ref_loc.end_off < first_match.lit_loc.start_off then
-                         max acc r.ref_loc.end_off
-                       else acc)
-                    0 file_analysis.Source_file.references
-                in
-                let insert_offset, insert_line, insert_decl =
-                  if max_open_off > 0 then
-                    let len = String.length file_content in
-                    let rec find_nl idx =
-                      if idx >= len then idx
-                      else if file_content.[idx] = '\n' then idx + 1
-                      else find_nl (idx + 1)
-                    in
-                    let at = find_nl max_open_off in
-                    (at, 1, Printf.sprintf "\nlet %s = %s\n" const_name raw_literal)
-                  else
-                    (0, 1, Printf.sprintf "let %s = %s\n\n" const_name raw_literal)
-                in
-                let insert_edit =
-                  {
-                    Change_plan.e_start_off = insert_offset;
-                    e_end_off = insert_offset;
-                    e_start_line = insert_line;
-                    e_end_line = insert_line;
-                    e_replacement = insert_decl;
-                    e_reason = Printf.sprintf "define constant %s" const_name;
-                  }
-                in
-                let replace_edits =
-                  List.map
-                    (fun (m : Source_file.literal_occurrence) ->
-                       {
-                         Change_plan.e_start_off = m.lit_loc.start_off;
-                         e_end_off = m.lit_loc.end_off;
-                         e_start_line = m.lit_loc.start_lnum;
-                         e_end_line = m.lit_loc.end_lnum;
-                         e_replacement = const_name;
-                         e_reason = Printf.sprintf "replace literal with %s" const_name;
-                       })
-                    matches
-                in
-                let all_edits =
-                  List.sort (fun a b -> compare a.Change_plan.e_start_off b.Change_plan.e_start_off)
-                    (insert_edit :: replace_edits)
-                in
-                match Change_plan.apply_edits file_content all_edits with
-                | Error msg -> Error (Missing_content (Printf.sprintf "%s: %s" file msg))
-                | Ok new_content ->
-                    let edit_op =
-                      Change_plan.Op_edit_file
-                        {
-                          path = file;
-                          edits = all_edits;
-                          original_hash = md5_hex file_content;
-                          result_hash = md5_hex new_content;
-                        }
-                    in
-                    let description =
-                      Printf.sprintf "extract constant %s = %s in %s (%d occurrences replaced)"
-                        const_name raw_literal file (List.length matches)
-                    in
-                    Ok
-                      {
-                        Change_plan.cp_id = ctx.id;
-                        cp_created_at = ctx.now;
-                        cp_description = description;
-                        cp_command = ctx.command;
-                        cp_ops = [ edit_op ];
-                        cp_preconditions = [ Change_plan.Pre_exists { path = file; hash = md5_hex file_content } ];
-                        cp_warnings = [];
-                        cp_version = ctx.version;
-                      }
+    let* _ =
+      match Repository.find_file ctx.repo file with
+      | None -> Error (Src_not_found file)
+      | Some fe -> Ok fe
+    in
+    match (ctx.analysis_of file, ctx.content_of file) with
+    | Some analysis, Some content ->
+      let has_collision =
+        List.exists (fun vd -> vd.Source_file.vd_name = const_name) analysis.Source_file.value_defs
+      in
+      if has_collision then Error (Const_collision (file, const_name))
+      else Ok (analysis, content)
+    | _ -> Error (Missing_content file)
+
+let plan_extract_constant ~(ctx : ctx) ~(file : string) ~(literal : string) ~(const_name : string) :
+    (Change_plan.t, plan_error) result =
+  let file = Path.normalize file in
+  let ( let* ) = Result.bind in
+  let* analysis, content = validate_extract_constant ~ctx ~file ~const_name in
+  let matches = find_matching_literals ~literal analysis in
+  match matches with
+  | [] -> Error (Literal_not_found (file, literal))
+  | first_match :: _ ->
+    let first_off = first_match.lit_loc.start_off in
+    let raw_literal = String.sub content first_off (first_match.lit_loc.end_off - first_off) in
+    let insert_off, insert_decl =
+      compute_insertion ~content ~const_name ~raw_literal ~first_offset:first_off analysis.Source_file.references
+    in
+    let insert_edit = make_edit ~start_off:insert_off ~end_off:insert_off
+        ~replacement:insert_decl ~reason:(Printf.sprintf "define constant %s" const_name) () in
+    let replace_edits = List.map (make_replace_edit const_name) matches in
+    let all_edits = insert_edit :: replace_edits in
+    let edits_by_file = Hashtbl.create 1 in
+    Hashtbl.add edits_by_file file all_edits;
+    let description =
+      Printf.sprintf "extract constant %s = %s in %s (%d occurrences replaced)"
+        const_name raw_literal file (List.length matches)
+    in
+    Refactoring_helpers.finish_edit_plan ~ctx ~warnings:[] ~description edits_by_file
