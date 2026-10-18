@@ -2200,6 +2200,56 @@ let test_e2e_split_module () =
                 let restored = In_channel.with_open_bin (Filename.concat root "lib/api.ml") In_channel.input_all in
                 Alcotest.(check bool) "api.ml restored" false (str_contains restored "module Fetcher")))
 
+let test_smell_detection_functions () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  (* Function with too many arguments and weak error model *)
+  write "lib/bad_fn.ml" "let process a b c d e f = if a = 0 then failwith \"bad a\" else b + c + d + e + f\n";
+
+  match Reforge_app.Detect_smells.detect ~rt:runtime ~config ~root () with
+  | Error e -> Alcotest.fail ("detect failed: " ^ e)
+  | Ok smells ->
+      let has_too_many_args =
+        List.exists (fun s -> s.Smell_types.smell_id = "Too_Many_Arguments" && s.Smell_types.symbol = "process") smells
+      in
+      let has_weak_error =
+        List.exists (fun s -> s.Smell_types.smell_id = "Weak_Error_Model" && s.Smell_types.symbol = "process") smells
+      in
+      Alcotest.(check bool) "detected Too_Many_Arguments" true has_too_many_args;
+      Alcotest.(check bool) "detected Weak_Error_Model" true has_weak_error
+
+let test_smell_detection_modules () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  (* File with > 10 functions and missing .mli *)
+  let fns =
+    List.init 12 (fun i -> Printf.sprintf "let fn_%d x = x + %d\n" i i)
+    |> String.concat "\n"
+  in
+  write "lib/large_api.ml" fns;
+
+  match Reforge_app.Detect_smells.detect ~rt:runtime ~config ~root () with
+  | Error e -> Alcotest.fail ("detect failed: " ^ e)
+  | Ok smells ->
+      let has_missing_mli =
+        List.exists (fun s -> s.Smell_types.smell_id = "Missing_Interface" && str_contains s.Smell_types.file "large_api.ml") smells
+      in
+      Alcotest.(check bool) "detected Missing_Interface" true has_missing_mli
+
 (* ------------------------------------------------------------------ *)
 (* Test runner                                                        *)
 (* ------------------------------------------------------------------ *)
@@ -2272,6 +2322,11 @@ let () =
           Alcotest.test_case "e2e sync-mli" `Quick test_e2e_sync_mli;
           Alcotest.test_case "e2e split-module" `Quick test_e2e_split_module;
           Alcotest.test_case "stale plan rejection" `Quick test_stale_plan_rejection;
+        ] );
+      ( "smells",
+        [
+          Alcotest.test_case "smell detection functions" `Quick test_smell_detection_functions;
+          Alcotest.test_case "smell detection modules" `Quick test_smell_detection_modules;
         ] );
     ]
 

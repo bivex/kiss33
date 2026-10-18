@@ -10,6 +10,7 @@ open Cmd_inspect
 open Cmd_graph
 open Cmd_plan
 open Cmd_lifecycle
+open Cmd_smells
 
 let run ~rt ~argv () : int =
   let open Cmdliner.Term.Syntax in
@@ -312,6 +313,14 @@ let run ~rt ~argv () : int =
        run_undo ~rt ~json:j r ref)
   in
   let status_cmd = mk "status" "List plans and their statuses." (let+ r = root and+ j = json in run_status ~rt ~json:j r) in
+  let smells_cmd =
+    let sev = Arg.(value & opt string "" & info [ "severity" ] ~docv:"SEVERITY" ~doc:"Filter by minimum severity: CRITICAL, HIGH, MEDIUM, LOW.") in
+    let cat = Arg.(value & opt string "" & info [ "category" ] ~docv:"CATEGORY" ~doc:"Filter by smell category: FUNCTIONS, TYPES, MODULES, etc.") in
+    let path = Arg.(value & pos 0 string "" & info [] ~docv:"PATH" ~doc:"Optional path or directory to scan.") in
+    mk "smells" "Detect Clean Code smells across the repository according to Clean Code rules."
+      (let+ r = root and+ j = json and+ p = path and+ s = sev and+ c = cat in
+       run_smells ~rt ~json:j r p s c)
+  in
   let doc = "reforge is a compiler-aware refactoring engine for OCaml repositories." in
   let man =
     [
@@ -328,6 +337,7 @@ let run ~rt ~argv () : int =
       (Cmd.info "reforge" ~version:Version.version ~doc ~man)
       [
         init_cmd; scan_cmd; deps_cmd; cycles_cmd; report_cmd; inspect_cmd; tree_cmd;
+        smells_cmd;
         plan_cmd; preview_cmd; apply_cmd; validate_cmd; diff_cmd; undo_cmd; status_cmd;
       ]
   in
