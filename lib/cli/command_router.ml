@@ -680,6 +680,25 @@ let run_plan_remove_unused_opens ~rt ~json root file =
   | Ok (plan, path) ->
       emit_plan_created ~command:"plan remove-unused-opens" ~json plan path
 
+let run_plan_introduce_param_object ~rt ~json root file fn_name raw_args record_name =
+  let args =
+    String.split_on_char ',' raw_args
+    |> List.map String.trim
+    |> List.filter (fun s -> s <> "")
+  in
+  if file = "" || fn_name = "" || args = [] || record_name = "" then begin
+    let msg = "missing required arguments: FILE FN --args <A,B,...> --record <TYPE_NAME>" in
+    if json then (emit_error_json ~command:"plan introduce-param-object" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_introduce_param_object ~rt ~config ~root ~file ~fn_name ~args ~record_name () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan introduce-param-object" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan introduce-param-object" ~json plan path
+
 let load_plan_or_exit ~rt ~json ~root ~command ref =
   let module St = (val rt.Reforge_ports.Runtime.store) in
   let store_t = St.create ~root in
@@ -1119,6 +1138,16 @@ let run ~rt ~argv () : int =
        and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"File to clean up.") in
        run_plan_remove_unused_opens ~rt ~json:j r file)
   in
+  let plan_introduce_param_object_cmd =
+    mk "introduce-param-object" "Plan grouping a contiguous run of parameters into a record parameter."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"File containing the function definition.")
+       and+ fn = Arg.(value & pos 1 string "" & info [] ~docv:"FN" ~doc:"Function name.")
+       and+ args = Arg.(value & opt string "" & info [ "args" ] ~docv:"ARGS" ~doc:"Comma-separated list of parameter names to group.")
+       and+ record = Arg.(value & opt string "" & info [ "record" ] ~docv:"RECORD_NAME" ~doc:"Name of the generated record type.") in
+       run_plan_introduce_param_object ~rt ~json:j r file fn args record)
+  in
   let plan_cmd =
     Cmd.group (Cmd.info "plan" ~doc:"Create change plans.")
       [
@@ -1132,6 +1161,7 @@ let run ~rt ~argv () : int =
         plan_extract_constant_cmd;
         plan_rename_type_cmd;
         plan_remove_unused_opens_cmd;
+        plan_introduce_param_object_cmd;
       ]
   in
   let preview_cmd =

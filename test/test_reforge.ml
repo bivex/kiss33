@@ -1103,6 +1103,190 @@ let test_remove_unused_opens_errors () =
    | Error msg -> Alcotest.(check bool) "error all used" true (String.starts_with ~prefix:"no unused opens found" msg)
    | Ok _ -> Alcotest.fail "expected error when every open is used")
 
+let test_e2e_introduce_param_object_positional () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/util.ml" "let area x y w h = w * h\n";
+  write "lib/util.mli" "val area : int -> int -> int -> int -> int\n";
+  write "bin/main.ml" "let run () = Sample_lib.Util.area 0 0 100 200\n";
+
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
+      ~file:"lib/util.ml" ~fn_name:"area" ~args:[ "w"; "h" ] ~record_name:"dims" ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_introduce_param_object failed: " ^ e)
+  | Ok (plan, _path) -> (
+      let edited_files =
+        List.filter_map
+          (function
+            | Change_plan.Op_edit_file { path; _ } -> Some path
+            | _ -> None)
+          plan.cp_ops
+        |> List.sort compare
+      in
+      Alcotest.(check (list string)) "edited files" [ "bin/main.ml"; "lib/util.ml"; "lib/util.mli" ] edited_files;
+
+      match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+      | Error e -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure e)
+      | Ok _ ->
+          let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+          let mli_c = In_channel.with_open_bin (Filename.concat root "lib/util.mli") In_channel.input_all in
+          let main_c = In_channel.with_open_bin (Filename.concat root "bin/main.ml") In_channel.input_all in
+          Alcotest.(check string) "util.ml rewritten"
+            "type dims = { w : int; h : int }\nlet area x y { w; h } = w * h\n" util_c;
+          Alcotest.(check string) "util.mli rewritten"
+            "type dims = { w : int; h : int }\nval area : int -> int -> dims -> int\n" mli_c;
+          Alcotest.(check string) "main.ml rewritten"
+            "let run () = Sample_lib.Util.area 0 0 { w = 100; h = 200 }\n" main_c;
+
+          (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           | Error e -> Alcotest.fail ("validate failed: " ^ e)
+           | Ok checks ->
+               let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+               Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+
+          (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+           | Error e -> Alcotest.fail ("undo failed: " ^ e)
+           | Ok _ ->
+               let restored = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+               Alcotest.(check string) "util.ml restored" "let area x y w h = w * h\n" restored))
+
+let test_e2e_introduce_param_object_labelled_punned () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/util.ml" "let render ~color ~width ~height = width + height\n";
+  write "lib/util.mli" "val render : color:int -> width:int -> height:int -> int\n";
+  write "bin/main.ml" "let draw () =\n  let width = 10 in\n  let height = 20 in\n  Sample_lib.Util.render ~color:0 ~width ~height\n";
+
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
+      ~file:"lib/util.ml" ~fn_name:"render" ~args:[ "width"; "height" ] ~record_name:"box" ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_introduce_param_object failed: " ^ e)
+  | Ok (plan, _path) -> (
+      match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+      | Error e -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure e)
+      | Ok _ ->
+          let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+          let mli_c = In_channel.with_open_bin (Filename.concat root "lib/util.mli") In_channel.input_all in
+          let main_c = In_channel.with_open_bin (Filename.concat root "bin/main.ml") In_channel.input_all in
+          Alcotest.(check string) "util.ml rewritten"
+            "type box = { width : int; height : int }\nlet render ~color { width; height } = width + height\n" util_c;
+          Alcotest.(check string) "util.mli rewritten"
+            "type box = { width : int; height : int }\nval render : color:int -> box -> int\n" mli_c;
+          Alcotest.(check string) "main.ml rewritten with punning"
+            "let draw () =\n  let width = 10 in\n  let height = 20 in\n  Sample_lib.Util.render ~color:0 { width; height }\n" main_c;
+
+          (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           | Error e -> Alcotest.fail ("validate failed: " ^ e)
+           | Ok checks ->
+               let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+               Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed))
+
+let test_e2e_introduce_param_object_no_mli () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/dune" "(library (name sample_lib) (modules util))\n";
+  write "lib/util.ml" "let pair a b = (a, b)\n";
+  (try Sys.remove (Filename.concat root "lib/util.mli") with _ -> ());
+
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
+      ~file:"lib/util.ml" ~fn_name:"pair" ~args:[ "a"; "b" ] ~record_name:"pair_t" ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_introduce_param_object failed: " ^ e)
+  | Ok (plan, _path) -> (
+      Alcotest.(check bool) "warns about polymorphic fields" true
+        (List.exists (fun w -> String.starts_with ~prefix:"no interface for" w) plan.cp_warnings);
+
+      match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+      | Error e -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure e)
+      | Ok _ ->
+          let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+          Alcotest.(check string) "util.ml rewritten polymorphic"
+            "type ('a, 'b) pair_t = { a : 'a; b : 'b }\nlet pair { a; b } = (a, b)\n" util_c)
+
+let test_introduce_param_object_errors () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/util.ml" "let area x y w h = w * h\n";
+
+  (* Non-contiguous parameters *)
+  (match Reforge_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"area" ~args:[ "x"; "w" ] ~record_name:"dims" () with
+   | Error msg -> Alcotest.(check bool) "error not contiguous" true (String.starts_with ~prefix:"arguments w, x of function area" msg)
+   | Ok _ -> Alcotest.fail "expected error for non-contiguous args");
+
+  (* Missing parameter *)
+  (match Reforge_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"area" ~args:[ "w"; "z" ] ~record_name:"dims" () with
+   | Error msg -> Alcotest.(check bool) "error arg not found" true (String.starts_with ~prefix:"argument 'z' not found" msg)
+   | Ok _ -> Alcotest.fail "expected error for unknown arg");
+
+  (* Mixed kinds (positional + labelled) *)
+  write "lib/mixed.ml" "let f x ~y = x + y\n";
+  (match Reforge_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
+          ~file:"lib/mixed.ml" ~fn_name:"f" ~args:[ "x"; "y" ] ~record_name:"rec_t" () with
+   | Error msg -> Alcotest.(check bool) "error mixed kinds" true (String.starts_with ~prefix:"cannot group x, y in function f" msg)
+   | Ok _ -> Alcotest.fail "expected error for mixed kinds");
+
+  (* Optional parameter *)
+  write "lib/opt.ml" "let f ?(x = 0) y = x + y\n";
+  (match Reforge_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
+          ~file:"lib/opt.ml" ~fn_name:"f" ~args:[ "x"; "y" ] ~record_name:"rec_t" () with
+   | Error msg -> Alcotest.(check bool) "error optional arg" true (String.starts_with ~prefix:"cannot group optional argument 'x'" msg)
+   | Ok _ -> Alcotest.fail "expected error for optional arg");
+
+  (* Record collision *)
+  write "lib/coll.ml" "type dims = A\nlet f w h = w * h\n";
+  (match Reforge_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
+          ~file:"lib/coll.ml" ~fn_name:"f" ~args:[ "w"; "h" ] ~record_name:"dims" () with
+   | Error msg -> Alcotest.(check bool) "error collision" true (String.starts_with ~prefix:"type 'dims' already exists" msg)
+   | Ok _ -> Alcotest.fail "expected error for record collision");
+
+  (* Invalid type identifier *)
+  (match Reforge_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"area" ~args:[ "w"; "h" ] ~record_name:"Dims" () with
+   | Error msg -> Alcotest.(check bool) "error invalid name" true (String.starts_with ~prefix:"invalid OCaml type identifier" msg)
+   | Ok _ -> Alcotest.fail "expected error for invalid type name");
+
+  (* Empty arg group *)
+  (match Reforge_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"area" ~args:[] ~record_name:"dims" () with
+   | Error msg -> Alcotest.(check bool) "error empty args" true (String.starts_with ~prefix:"no arguments given" msg)
+   | Ok _ -> Alcotest.fail "expected error for empty args")
+
 (* ------------------------------------------------------------------ *)
 (* Test runner                                                        *)
 (* ------------------------------------------------------------------ *)
@@ -1147,6 +1331,10 @@ let () =
           Alcotest.test_case "e2e remove-unused-opens" `Quick test_e2e_remove_unused_opens;
           Alcotest.test_case "remove-unused-opens keeps unresolvable" `Quick test_remove_unused_opens_keeps_unresolvable;
           Alcotest.test_case "remove-unused-opens errors" `Quick test_remove_unused_opens_errors;
+          Alcotest.test_case "e2e introduce-param-object positional" `Quick test_e2e_introduce_param_object_positional;
+          Alcotest.test_case "e2e introduce-param-object labelled punned" `Quick test_e2e_introduce_param_object_labelled_punned;
+          Alcotest.test_case "e2e introduce-param-object no mli" `Quick test_e2e_introduce_param_object_no_mli;
+          Alcotest.test_case "introduce-param-object errors" `Quick test_introduce_param_object_errors;
           Alcotest.test_case "stale plan rejection" `Quick test_stale_plan_rejection;
         ] );
     ]

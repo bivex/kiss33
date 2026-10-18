@@ -131,6 +131,7 @@ reforge [COMMAND] [OPTIONS]
 | `reforge plan extract-constant <FILE> <LIT> <NAME>` | Plan extracting repeated magic literal strings/numbers into a top-level constant. |
 | `reforge plan rename-type <FILE> <OLD> <NEW>` | Plan renaming a type across declarations, type annotations, and `.mli` interfaces repo-wide. |
 | `reforge plan remove-unused-opens <FILE>` | Plan dropping `open` directives whose module is never used unqualified in the file. |
+| `reforge plan introduce-param-object <FILE> <FN> --args <A,B,...> --record <NAME>` | Plan grouping contiguous parameters into a record type with `.mli` sync and call site rewriting (incl. punning). |
 | `reforge preview [PLAN]` | Show byte-precise unified diffs and operations of a plan (defaults to latest). |
 | `reforge diff [--plan=PLAN]` | Show unified diffs for a plan or applied changes. |
 | `reforge apply [PLAN]` | Execute the plan transactionally with automatic backups. |
@@ -351,6 +352,26 @@ created .reforge/plans/plan-0009.json
     edit  lib/util.ml (1 edits)
 
 $ reforge preview   # verifies only the unused open disappears
+$ reforge apply
+$ reforge validate
+```
+
+### 11. Introduce Parameter Object
+
+Group a contiguous run of parameters into a unified record type. Generates the record declaration,
+rewrites the function definition with a punned record pattern, reshapes any companion `.mli` val spec,
+and rewrites call sites repo-wide (with punning when argument variables match field names):
+
+```bash
+$ reforge plan introduce-param-object lib/util.ml area --args w,h --record dims
+created .reforge/plans/plan-0010.json
+  group w, h of lib/util.ml:area into record dims (3 files edited)
+  operations:
+    edit  bin/main.ml (1 edits)
+    edit  lib/util.ml (2 edits)
+    edit  lib/util.mli (2 edits)
+
+$ reforge preview
 $ reforge apply
 $ reforge validate
 ```
