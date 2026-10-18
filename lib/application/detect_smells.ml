@@ -4,6 +4,23 @@ open Reforge_domain
 
 let ( let* ) = Result.bind
 
+let matches_path target_path (file : string) : bool =
+  match target_path with
+  | Some target when target <> "" ->
+      let norm = Path.normalize target in
+      file = norm || String.starts_with ~prefix:(norm ^ "/") file
+  | _ -> true
+
+let matches_min_severity min_severity (sev : Smell_types.severity) : bool =
+  match min_severity with
+  | Some min_sev -> Smell_types.severity_rank sev >= Smell_types.severity_rank min_sev
+  | None -> true
+
+let matches_category category (cat : Smell_types.category) : bool =
+  match category with
+  | Some c -> cat = c
+  | None -> true
+
 let detect ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
     ?target_path ?(min_severity : Smell_types.severity option)
     ?(category : Smell_types.category option) () :
@@ -18,20 +35,11 @@ let detect ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
   in
   let all_smells = Smell_detector.detect_all ~repo ~graph ~analyses ~contents in
   let filtered =
-    all_smells
-    |> List.filter (fun (s : Smell_types.smell) ->
-        match target_path with
-        | Some target when target <> "" ->
-            let norm_target = Path.normalize target in
-            s.file = norm_target || String.starts_with ~prefix:(norm_target ^ "/") s.file
-        | _ -> true)
-    |> List.filter (fun (s : Smell_types.smell) ->
-        match min_severity with
-        | Some min_sev -> Smell_types.severity_rank s.severity >= Smell_types.severity_rank min_sev
-        | None -> true)
-    |> List.filter (fun (s : Smell_types.smell) ->
-        match category with
-        | Some cat -> s.category = cat
-        | None -> true)
+    List.filter
+      (fun (s : Smell_types.smell) ->
+         matches_path target_path s.file
+         && matches_min_severity min_severity s.severity
+         && matches_category category s.category)
+      all_smells
   in
   Ok filtered
