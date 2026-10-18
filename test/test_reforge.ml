@@ -132,41 +132,20 @@ let test_cycles () =
   (* a -> b -> c -> a cycle *)
   let a_analysis =
     {
-      Source_file.parse_ok = true;
-      parse_error = None;
-      module_defs = [];
-      value_defs = [];
-      val_specs = [];
-      type_defs = [];
+      Source_file.empty_analysis with
       references = [ { ref_segments = [ "B"; "foo" ]; ref_loc = loc; ref_context = Source_file.Ref_value } ];
-      call_sites = [];
-      literals = [];
     }
   in
   let b_analysis =
     {
-      Source_file.parse_ok = true;
-      parse_error = None;
-      module_defs = [];
-      value_defs = [];
-      val_specs = [];
-      type_defs = [];
+      Source_file.empty_analysis with
       references = [ { ref_segments = [ "C"; "bar" ]; ref_loc = loc; ref_context = Source_file.Ref_value } ];
-      call_sites = [];
-      literals = [];
     }
   in
   let c_analysis =
     {
-      Source_file.parse_ok = true;
-      parse_error = None;
-      module_defs = [];
-      value_defs = [];
-      val_specs = [];
-      type_defs = [];
+      Source_file.empty_analysis with
       references = [ { ref_segments = [ "A"; "baz" ]; ref_loc = loc; ref_context = Source_file.Ref_value } ];
-      call_sites = [];
-      literals = [];
     }
   in
   let graph = Module_graph.build repo [ ("cyc/a.ml", a_analysis); ("cyc/b.ml", b_analysis); ("cyc/c.ml", c_analysis) ] in
@@ -1287,6 +1266,238 @@ let test_introduce_param_object_errors () =
    | Error msg -> Alcotest.(check bool) "error empty args" true (String.starts_with ~prefix:"no arguments given" msg)
    | Ok _ -> Alcotest.fail "expected error for empty args")
 
+let str_contains (haystack : string) (needle : string) : bool =
+  let h_len = String.length haystack in
+  let n_len = String.length needle in
+  if n_len = 0 then true
+  else if n_len > h_len then false
+  else
+    let found = ref false in
+    for i = 0 to h_len - n_len do
+      if not !found && String.sub haystack i n_len = needle then found := true
+    done;
+    !found
+
+let test_e2e_extract_fn () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  let orig_util =
+    "let compute a b =\n  let x = a + 1 in\n  let y = b * 2 in\n  let z = x + y in\n  z * 3\n"
+  in
+  write "lib/util.ml" orig_util;
+
+  (* Extract lines 3-5 into helper calc *)
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_extract_fn ~rt:runtime ~config ~root
+      ~file:"lib/util.ml" ~range:"3-5" ~new_fn_name:"calc" ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_extract_fn failed: " ^ e)
+  | Ok (plan, _path) ->
+      Alcotest.(check int) "one op" 1 (List.length plan.cp_ops);
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       | Ok applied ->
+           Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
+           let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+           Alcotest.(check bool) "contains calc definition" true
+             (str_contains util_c "let calc");
+           Alcotest.(check bool) "calc takes free vars" true
+             (str_contains util_c "let calc" && (str_contains util_c "calc b x" || str_contains util_c "calc x b"));
+
+           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+            | Error e -> Alcotest.fail ("validate failed: " ^ e)
+            | Ok checks ->
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+            | Error e -> Alcotest.fail ("undo failed: " ^ e)
+            | Ok _ ->
+                let restored = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+                Alcotest.(check string) "restored" orig_util restored))
+
+let test_extract_fn_errors () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/util.ml" "let f x = x + 1\n";
+
+  (* Missing file *)
+  (match Reforge_app.Plan_refactoring.plan_extract_fn ~rt:runtime ~config ~root
+          ~file:"lib/missing.ml" ~range:"1" ~new_fn_name:"foo" () with
+   | Error msg -> Alcotest.(check bool) "error missing" true (String.starts_with ~prefix:"source not found" msg)
+   | Ok _ -> Alcotest.fail "expected error for missing file");
+
+  (* Range out of bounds *)
+  (match Reforge_app.Plan_refactoring.plan_extract_fn ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~range:"10-20" ~new_fn_name:"foo" () with
+   | Error msg -> Alcotest.(check bool) "error out of bounds" true (String.starts_with ~prefix:"range" msg)
+   | Ok _ -> Alcotest.fail "expected error for out of bounds range");
+
+  (* Invalid fn name *)
+  (match Reforge_app.Plan_refactoring.plan_extract_fn ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~range:"1" ~new_fn_name:"Foo" () with
+   | Error msg -> Alcotest.(check bool) "error invalid name" true (String.starts_with ~prefix:"invalid OCaml identifier" msg)
+   | Ok _ -> Alcotest.fail "expected error for invalid ident");
+
+  (* Collision *)
+  (match Reforge_app.Plan_refactoring.plan_extract_fn ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~range:"1" ~new_fn_name:"f" () with
+   | Error msg -> Alcotest.(check bool) "error collision" true (String.starts_with ~prefix:"function 'f' already exists" msg)
+   | Ok _ -> Alcotest.fail "expected error for collision")
+
+let test_e2e_decompose_match () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  let orig_code =
+    "type expr = Lit of int | Var of string\n\nlet eval env e =\n  match e with\n  | Lit n -> n\n  | Var x -> String.length x\n"
+  in
+  write "lib/eval.ml" orig_code;
+
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_decompose_match ~rt:runtime ~config ~root
+      ~file:"lib/eval.ml" ~fn_name:"eval" ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_decompose_match failed: " ^ e)
+  | Ok (plan, _path) ->
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       | Ok applied ->
+           Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
+           let eval_c = In_channel.with_open_bin (Filename.concat root "lib/eval.ml") In_channel.input_all in
+           Alcotest.(check bool) "contains handle_eval_lit" true (str_contains eval_c "handle_eval_lit");
+           Alcotest.(check bool) "contains handle_eval_var" true (str_contains eval_c "handle_eval_var");
+           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+            | Error e -> Alcotest.fail ("validate failed: " ^ e)
+            | Ok checks ->
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+            | Error e -> Alcotest.fail ("undo failed: " ^ e)
+            | Ok _ ->
+                let restored = In_channel.with_open_bin (Filename.concat root "lib/eval.ml") In_channel.input_all in
+                Alcotest.(check string) "restored" orig_code restored))
+
+let test_decompose_match_errors () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/util.ml" "let f x = x + 1\n";
+  write "lib/rec.ml" "let rec run n = match n with | 0 -> 0 | k -> run (k - 1)\n";
+
+  (* Missing function *)
+  (match Reforge_app.Plan_refactoring.plan_decompose_match ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"missing" () with
+   | Error msg -> Alcotest.(check bool) "error fn not found" true (String.starts_with ~prefix:"function 'missing' not found" msg)
+   | Ok _ -> Alcotest.fail "expected error for missing function");
+
+  (* No match in function *)
+  (match Reforge_app.Plan_refactoring.plan_decompose_match ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"f" () with
+   | Error msg -> Alcotest.(check bool) "error no match" true (String.starts_with ~prefix:"no match expression found" msg)
+   | Ok _ -> Alcotest.fail "expected error for no match");
+
+  (* Recursive call in branch *)
+  (match Reforge_app.Plan_refactoring.plan_decompose_match ~rt:runtime ~config ~root
+          ~file:"lib/rec.ml" ~fn_name:"run" () with
+   | Error msg -> Alcotest.(check bool) "error recursive branch" true (String.starts_with ~prefix:"cannot decompose match in 'run'" msg)
+   | Ok _ -> Alcotest.fail "expected error for recursive branch")
+
+let test_e2e_inline_fn () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/util.ml" "let sq x = x * x\nlet double x = x + x\n";
+  write "lib/util.mli" "val sq : int -> int\nval double : int -> int\n";
+  write "bin/main.ml" "let () = print_int (Sample_lib.Util.sq (3 + 1))\n";
+
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_inline_fn ~rt:runtime ~config ~root
+      ~file:"lib/util.ml" ~fn_name:"sq" ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_inline_fn failed: " ^ e)
+  | Ok (plan, _path) ->
+      Alcotest.(check int) "3 files touched" 3 (List.length plan.cp_ops);
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       | Ok applied ->
+           Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
+           let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+           let mli_c = In_channel.with_open_bin (Filename.concat root "lib/util.mli") In_channel.input_all in
+           let main_c = In_channel.with_open_bin (Filename.concat root "bin/main.ml") In_channel.input_all in
+           Alcotest.(check bool) "sq deleted from util.ml" false (str_contains util_c "let sq");
+           Alcotest.(check bool) "double kept in util.ml" true (str_contains util_c "let double");
+           Alcotest.(check bool) "sq deleted from util.mli" false (str_contains mli_c "val sq");
+           Alcotest.(check bool) "inlined in main.ml" true (str_contains main_c "((3 + 1) * (3 + 1))");
+           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+            | Error e -> Alcotest.fail ("validate failed: " ^ e)
+            | Ok checks ->
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+            | Error e -> Alcotest.fail ("undo failed: " ^ e)
+            | Ok _ ->
+                let restored_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+                Alcotest.(check bool) "util.ml restored" true (str_contains restored_util "let sq x = x * x")))
+
+let test_inline_fn_errors () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/util.ml" "let rec fact n = if n <= 1 then 1 else n * fact (n - 1)\n";
+
+  (* Missing function *)
+  (match Reforge_app.Plan_refactoring.plan_inline_fn ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"missing" () with
+   | Error msg -> Alcotest.(check bool) "error fn not found" true (String.starts_with ~prefix:"function 'missing' not found" msg)
+   | Ok _ -> Alcotest.fail "expected error for missing function");
+
+  (* Recursive function *)
+  (match Reforge_app.Plan_refactoring.plan_inline_fn ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"fact" () with
+   | Error msg -> Alcotest.(check bool) "error recursive fn" true (String.starts_with ~prefix:"cannot inline recursive function" msg)
+   | Ok _ -> Alcotest.fail "expected error for recursive function")
+
 (* ------------------------------------------------------------------ *)
 (* Test runner                                                        *)
 (* ------------------------------------------------------------------ *)
@@ -1335,6 +1546,13 @@ let () =
           Alcotest.test_case "e2e introduce-param-object labelled punned" `Quick test_e2e_introduce_param_object_labelled_punned;
           Alcotest.test_case "e2e introduce-param-object no mli" `Quick test_e2e_introduce_param_object_no_mli;
           Alcotest.test_case "introduce-param-object errors" `Quick test_introduce_param_object_errors;
+          Alcotest.test_case "e2e extract-fn" `Quick test_e2e_extract_fn;
+          Alcotest.test_case "extract-fn errors" `Quick test_extract_fn_errors;
+          Alcotest.test_case "e2e decompose-match" `Quick test_e2e_decompose_match;
+          Alcotest.test_case "decompose-match errors" `Quick test_decompose_match_errors;
+          Alcotest.test_case "e2e inline-fn" `Quick test_e2e_inline_fn;
+          Alcotest.test_case "inline-fn errors" `Quick test_inline_fn_errors;
           Alcotest.test_case "stale plan rejection" `Quick test_stale_plan_rejection;
         ] );
     ]
+

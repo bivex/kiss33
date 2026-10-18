@@ -141,6 +141,31 @@ let run ~rt ~argv () : int =
        and+ record = Arg.(value & opt string "" & info [ "record" ] ~docv:"RECORD_NAME" ~doc:"Name of the generated record type.") in
        run_plan_introduce_param_object ~rt ~json:j r file fn args record)
   in
+  let plan_extract_fn_cmd =
+    mk "extract-fn" "Plan extracting an expression or statement range into a top-level function."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"File to refactor.")
+       and+ range = Arg.(value & pos 1 string "" & info [] ~docv:"RANGE" ~doc:"Expression or line range (e.g. '5-10' or '5:2-10:15').")
+       and+ new_fn = Arg.(value & pos 2 string "" & info [] ~docv:"NEW_FN_NAME" ~doc:"Name for the new extracted function.") in
+       run_plan_extract_fn ~rt ~json:j r file range new_fn)
+  in
+  let plan_decompose_match_cmd =
+    mk "decompose-match" "Plan extracting branches of a pattern match into dedicated pure handler functions."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"File containing the function.")
+       and+ fn = Arg.(value & pos 1 string "" & info [] ~docv:"FN" ~doc:"Function containing the match expression.") in
+       run_plan_decompose_match ~rt ~json:j r file fn)
+  in
+  let plan_inline_fn_cmd =
+    mk "inline-fn" "Plan inlining a function body into all call sites across the codebase."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"File declaring the function to inline.")
+       and+ fn = Arg.(value & pos 1 string "" & info [] ~docv:"FN" ~doc:"Name of the function to inline.") in
+       run_plan_inline_fn ~rt ~json:j r file fn)
+  in
   let plan_cmd =
     Cmd.group (Cmd.info "plan" ~doc:"Create change plans.")
       [
@@ -155,6 +180,9 @@ let run ~rt ~argv () : int =
         plan_rename_type_cmd;
         plan_remove_unused_opens_cmd;
         plan_introduce_param_object_cmd;
+        plan_extract_fn_cmd;
+        plan_decompose_match_cmd;
+        plan_inline_fn_cmd;
       ]
   in
   let preview_cmd =

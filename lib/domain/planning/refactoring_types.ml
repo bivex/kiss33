@@ -17,6 +17,9 @@ type intent =
       args : string list;
       record_name : string;
     }
+  | Extract_fn of { file : string; range : string; new_fn_name : string }
+  | Decompose_match of { file : string; fn_name : string }
+  | Inline_fn of { file : string; fn_name : string }
 
 type plan_error =
   | Src_not_found of string
@@ -50,6 +53,14 @@ type plan_error =
   | Arg_group_incomplete of string * string * string
   | Record_position_unsafe of string * string * string
   | Empty_arg_group
+  | Invalid_range of string * string
+  | Range_out_of_bounds of string * string
+  | Empty_extracted_range of string
+  | Invalid_extracted_expression of string * string
+  | No_match_to_decompose of string * string
+  | Recursive_match_branch of string * string
+  | Recursive_fn_inline of string * string
+  | No_function_body of string * string
 
 let pe_message = function
   | Src_not_found p -> Printf.sprintf "source not found in repository: %s" p
@@ -124,6 +135,15 @@ let pe_message = function
         "cannot group into record %s for %s: a call site in %s would bind the record argument at the wrong position"
         record fn caller
   | Empty_arg_group -> "no arguments given: --args must list at least one parameter"
+  | Invalid_range (r, msg) -> Printf.sprintf "invalid range '%s': %s" r msg
+  | Range_out_of_bounds (r, msg) -> Printf.sprintf "range '%s' is out of bounds: %s" r msg
+  | Empty_extracted_range f -> Printf.sprintf "cannot extract function: specified range in %s is empty" f
+  | Invalid_extracted_expression (f, msg) -> Printf.sprintf "cannot extract function in %s: %s" f msg
+  | No_match_to_decompose (f, fn) -> Printf.sprintf "no match expression found in function '%s' of %s" fn f
+  | Recursive_match_branch (f, fn) ->
+      Printf.sprintf "cannot decompose match in '%s' (%s): a branch contains a recursive call to '%s'" fn f fn
+  | Recursive_fn_inline (f, fn) -> Printf.sprintf "cannot inline recursive function '%s' (%s)" fn f
+  | No_function_body (f, fn) -> Printf.sprintf "function '%s' (%s) has no body expression to inline" fn f
 
 type ctx = {
   repo : Repository.t;

@@ -217,3 +217,13 @@ let partial_value_uses ~(ctx : ctx) ~(file : string) ~(fn_name : string) : strin
                f_analysis.Source_file.references
          | None -> [])
   |> List.sort_uniq compare
+
+let make_edit ?(start_line = 1) ?(end_line = 1) ~start_off ~end_off ~replacement ~reason () : Change_plan.edit =
+  {
+    Change_plan.e_start_off = start_off;
+    e_end_off = end_off;
+    e_start_line = start_line;
+    e_end_line = end_line;
+    e_replacement = replacement;
+    e_reason = reason;
+  }

@@ -17,6 +17,9 @@ type intent =
       args : string list;
       record_name : string;
     }
+  | Extract_fn of { file : string; range : string; new_fn_name : string }
+  | Decompose_match of { file : string; fn_name : string }
+  | Inline_fn of { file : string; fn_name : string }
 
 type plan_error =
   | Src_not_found of string
@@ -50,6 +53,14 @@ type plan_error =
   | Arg_group_incomplete of string * string * string
   | Record_position_unsafe of string * string * string
   | Empty_arg_group
+  | Invalid_range of string * string
+  | Range_out_of_bounds of string * string
+  | Empty_extracted_range of string
+  | Invalid_extracted_expression of string * string
+  | No_match_to_decompose of string * string
+  | Recursive_match_branch of string * string
+  | Recursive_fn_inline of string * string
+  | No_function_body of string * string
 
 val pe_message : plan_error -> string
 
@@ -162,3 +173,27 @@ val plan_introduce_param_object :
     the record declaration, rewrites the function header to a punned record
     pattern, reshapes any companion .mli val spec, and updates call sites to
     pass record literals. *)
+
+val plan_extract_fn :
+  ctx:ctx ->
+  file:string ->
+  range:string ->
+  new_fn_name:string ->
+  (Change_plan.t, plan_error) result
+(** Extract an expression or statement range into a top-level function,
+    calculating free variables as parameters and substituting a call site. *)
+
+val plan_decompose_match :
+  ctx:ctx ->
+  file:string ->
+  fn_name:string ->
+  (Change_plan.t, plan_error) result
+(** Extract branches of a pattern match into dedicated pure handler functions,
+    reducing cyclomatic complexity. *)
+
+val plan_inline_fn :
+  ctx:ctx ->
+  file:string ->
+  fn_name:string ->
+  (Change_plan.t, plan_error) result
+(** Inline a function body across all call sites, updating definition and interface. *)

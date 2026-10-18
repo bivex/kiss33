@@ -64,6 +64,9 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
 
   let call_sites = ref [] in
   let literals = ref [] in
+  let matches = ref [] in
+  let local_bindings = ref [] in
+  let current_fn = ref "" in
 
   let iterator =
     let open Ast_iterator in
@@ -81,13 +84,24 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
            | Pstr_value (_rec_flag, bindings) ->
                List.iter
                  (fun vb ->
-                    match extract_var vb.Parsetree.pvb_pat with
-                    | Some (name, loc) ->
-                        let params, body_loc = extract_params_and_body vb.Parsetree.pvb_expr in
-                        push_val_def name loc (loc_of item.Parsetree.pstr_loc) params body_loc
-                    | None -> ())
-                 bindings;
-               default.structure_item it item
+                    let name_opt =
+                      match extract_var vb.Parsetree.pvb_pat with
+                      | Some (name, loc) ->
+                          let params, body_loc = extract_params_and_body vb.Parsetree.pvb_expr in
+                          push_val_def name loc (loc_of item.Parsetree.pstr_loc) params body_loc;
+                          List.iter
+                            (fun (p : Source_file.fn_param) ->
+                               local_bindings := (p.fp_name, p.fp_loc) :: !local_bindings)
+                            params;
+                          Some name
+                      | None -> None
+                    in
+                    let prev_fn = !current_fn in
+                    Option.iter (fun n -> current_fn := n) name_opt;
+                    it.pat it vb.Parsetree.pvb_pat;
+                    it.expr it vb.Parsetree.pvb_expr;
+                    current_fn := prev_fn)
+                 bindings
            | Pstr_module mb -> (
                let name = mb.Parsetree.pmb_name.Asttypes.txt in
                (match name with
@@ -182,6 +196,43 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
            | Pexp_apply (fn, args) ->
                Option.iter (fun cs -> call_sites := cs :: !call_sites) (call_site_of_apply fn args);
                default.expr it e
+           | Pexp_let (_rec_flag, bindings, _body) ->
+               List.iter
+                 (fun vb ->
+                    local_bindings := collect_pat_vars_with_loc vb.Parsetree.pvb_pat @ !local_bindings)
+                 bindings;
+               default.expr it e
+           | Pexp_function (params, _constraint, body) ->
+               List.iter
+                 (fun (p : Parsetree.function_param) ->
+                    match p.Parsetree.pparam_desc with
+                    | Pparam_val (_, _, pat) ->
+                        local_bindings := collect_pat_vars_with_loc pat @ !local_bindings
+                    | Pparam_newtype _ -> ())
+                 params;
+               (match body with
+                | Pfunction_cases (cases, _, _) ->
+                    matches :=
+                      match_site_of_match ~content ~fn_name:!current_fn e.Parsetree.pexp_loc e cases
+                      :: !matches;
+                    List.iter
+                      (fun c ->
+                         local_bindings :=
+                           collect_pat_vars_with_loc c.Parsetree.pc_lhs @ !local_bindings)
+                      cases
+                | Pfunction_body _ -> ());
+               default.expr it e
+           | Pexp_match (matched_expr, cases) ->
+               matches :=
+                 match_site_of_match ~content ~fn_name:!current_fn e.Parsetree.pexp_loc matched_expr
+                   cases
+                 :: !matches;
+               List.iter
+                 (fun c ->
+                    local_bindings :=
+                      collect_pat_vars_with_loc c.Parsetree.pc_lhs @ !local_bindings)
+                 cases;
+               default.expr it e
            | Pexp_construct (lid, arg) ->
                push_lident lid Source_file.Ref_constructor;
                Option.iter (it.expr it) arg
@@ -267,6 +318,8 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
        references = List.rev !refs;
        call_sites = List.rev !call_sites;
        literals = List.rev !literals;
+       matches = List.rev !matches;
+       local_bindings = List.rev !local_bindings;
      }
    with
   | Syntaxerr.Error err ->

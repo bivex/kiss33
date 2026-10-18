@@ -132,6 +132,9 @@ reforge [COMMAND] [OPTIONS]
 | `reforge plan rename-type <FILE> <OLD> <NEW>` | Plan renaming a type across declarations, type annotations, and `.mli` interfaces repo-wide. |
 | `reforge plan remove-unused-opens <FILE>` | Plan dropping `open` directives whose module is never used unqualified in the file. |
 | `reforge plan introduce-param-object <FILE> <FN> --args <A,B,...> --record <NAME>` | Plan grouping contiguous parameters into a record type with `.mli` sync and call site rewriting (incl. punning). |
+| `reforge plan extract-fn <FILE> <RANGE> <NEW_FN_NAME>` | Plan extracting an expression or statement range into a top-level function, automatically computing free variables as parameters and substituting call sites. |
+| `reforge plan decompose-match <FILE> <FN>` | Plan extracting branches of a pattern match into dedicated pure handler functions (`handle_<fn>_<pat>`), reducing cyclomatic complexity. |
+| `reforge plan inline-fn <FILE> <FN>` | Plan inlining a function body across all call sites repo-wide, substituting arguments and removing the definition and `.mli` spec. |
 | `reforge preview [PLAN]` | Show byte-precise unified diffs and operations of a plan (defaults to latest). |
 | `reforge diff [--plan=PLAN]` | Show unified diffs for a plan or applied changes. |
 | `reforge apply [PLAN]` | Execute the plan transactionally with automatic backups. |
@@ -376,7 +379,63 @@ $ reforge apply
 $ reforge validate
 ```
 
+### 12. Extract Function
+
+Extract an arbitrary expression or line range into a standalone top-level helper function. Free variables
+are automatically computed and bound as parameters, and the extraction site is replaced with the function call:
+
+```bash
+$ reforge plan extract-fn lib/compute.ml 12-16 format_report
+created .reforge/plans/plan-0011.json
+  extract range 12-16 in lib/compute.ml into function format_report
+  operations:
+    edit  lib/compute.ml (2 edits)
+
+$ reforge preview
+$ reforge apply
+$ reforge validate
+```
+
+### 13. Decompose Match Expressions
+
+Break down complex `match` expressions in dispatchers and large handlers into dedicated, testable pure helper
+functions (`handle_<fn>_<case>`), dramatically reducing cyclomatic complexity:
+
+```bash
+$ reforge plan decompose-match lib/router.ml dispatch
+created .reforge/plans/plan-0012.json
+  decompose match in dispatch (lib/router.ml) into 4 handlers
+  operations:
+    edit  lib/router.ml (5 edits)
+
+$ reforge preview
+$ reforge apply
+$ reforge validate
+```
+
+### 14. Inline Function
+
+Eliminate unnecessary layers of indirection by inlining a function's body into all its call sites repo-wide,
+substituting arguments into parameters with operator precedence safety, and cleanly removing the definition
+and its companion `.mli` specification:
+
+```bash
+$ reforge plan inline-fn lib/math.ml sq
+created .reforge/plans/plan-0013.json
+  inline function sq in lib/math.ml (4 call site(s) updated)
+  operations:
+    edit  bin/main.ml (2 edits)
+    edit  lib/compute.ml (2 edits)
+    edit  lib/math.ml (1 edits)
+    edit  lib/math.mli (1 edits)
+
+$ reforge preview
+$ reforge apply
+$ reforge validate
+```
+
 ---
+
 
 ## Exit Codes
 

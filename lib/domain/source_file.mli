@@ -101,6 +101,20 @@ type literal_occurrence = {
   lit_loc : loc;
 }
 
+type match_branch = {
+  mb_pat : string;
+  mb_pat_loc : loc;
+  mb_body_loc : loc;
+  mb_bound_vars : string list;
+}
+
+type match_site = {
+  ms_loc : loc;
+  ms_expr_loc : loc;
+  ms_fn_name : string;
+  ms_branches : match_branch list;
+}
+
 type analysis = {
   parse_ok : bool;
   parse_error : string option;
@@ -111,6 +125,8 @@ type analysis = {
   references : reference list;
   call_sites : call_site list;
   literals : literal_occurrence list;
+  matches : match_site list;
+  local_bindings : (string * loc) list;
 }
 
 val head_of_reference : reference -> string option

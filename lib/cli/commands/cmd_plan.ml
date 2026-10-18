@@ -163,3 +163,46 @@ let run_plan_introduce_param_object ~rt ~json root file fn_name raw_args record_
       else (prerr_endline ("error: " ^ e); exit exit_usage_code)
   | Ok (plan, path) ->
       emit_plan_created ~command:"plan introduce-param-object" ~json plan path
+
+let run_plan_extract_fn ~rt ~json root file range new_fn_name =
+  if file = "" || range = "" || new_fn_name = "" then begin
+    let msg = "missing required arguments: FILE RANGE NEW_FN_NAME" in
+    if json then (emit_error_json ~command:"plan extract-fn" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_extract_fn ~rt ~config ~root ~file ~range ~new_fn_name () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan extract-fn" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan extract-fn" ~json plan path
+
+let run_plan_decompose_match ~rt ~json root file fn_name =
+  if file = "" || fn_name = "" then begin
+    let msg = "missing required arguments: FILE FN" in
+    if json then (emit_error_json ~command:"plan decompose-match" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_decompose_match ~rt ~config ~root ~file ~fn_name () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan decompose-match" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan decompose-match" ~json plan path
+
+let run_plan_inline_fn ~rt ~json root file fn_name =
+  if file = "" || fn_name = "" then begin
+    let msg = "missing required arguments: FILE FN" in
+    if json then (emit_error_json ~command:"plan inline-fn" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_inline_fn ~rt ~config ~root ~file ~fn_name () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan inline-fn" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan inline-fn" ~json plan path
+

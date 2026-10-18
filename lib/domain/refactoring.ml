@@ -10,3 +10,6 @@ include Plan_param_object
 include Plan_constant
 include Plan_type
 include Plan_opens
+include Plan_extract_fn
+include Plan_decompose_match
+include Plan_inline_fn
