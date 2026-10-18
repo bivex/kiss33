@@ -69,6 +69,11 @@ let detect_function_smells ~(file : string) ~(content : string)
     (analysis : Source_file.analysis) : smell list =
   let smells = ref [] in
   let emit s = smells := s :: !smells in
+  let is_detector =
+    String.ends_with ~suffix:"smell_detector.ml" file
+    || String.ends_with ~suffix:"smell_detector_functions.ml" file
+    || String.ends_with ~suffix:"smell_detector_modules.ml" file
+  in
 
   List.iter (fun (vd : Source_file.value_def) ->
     let start_l = vd.Source_file.vd_full_loc.Source_file.start_lnum in
@@ -153,8 +158,29 @@ let detect_function_smells ~(file : string) ~(content : string)
         suggested_refactoring = Printf.sprintf "reforge plan extract-fn %s %d-%d <SUB_FN>" file start_l end_l;
       };
 
+    let body_s, body_e =
+      match vd.Source_file.vd_body_loc with
+      | Some b -> (b.Source_file.start_off, b.Source_file.end_off)
+      | None -> (vd.Source_file.vd_loc.Source_file.end_off, vd.Source_file.vd_full_loc.Source_file.end_off)
+    in
+    let fn_refs =
+      List.filter
+        (fun (r : Source_file.reference) ->
+           r.Source_file.ref_context = Source_file.Ref_value
+           && r.Source_file.ref_loc.Source_file.start_off >= body_s
+           && r.Source_file.ref_loc.Source_file.end_off <= body_e)
+        analysis.Source_file.references
+    in
+
     (* 5. Weak_Error_Model: failwith or invalid_arg *)
-    if Refactoring_helpers.str_contains fn_body_str "failwith " || Refactoring_helpers.str_contains fn_body_str "invalid_arg " then
+    let calls_weak_error =
+      List.exists
+        (fun (r : Source_file.reference) ->
+           r.Source_file.ref_segments = [ "failwith" ]
+           || r.Source_file.ref_segments = [ "invalid_arg" ])
+        fn_refs
+    in
+    if (not is_detector) && calls_weak_error then
       emit {
         smell_id = "Weak_Error_Model";
         category = Types;
@@ -170,9 +196,15 @@ let detect_function_smells ~(file : string) ~(content : string)
       };
 
     (* 6. Partial_Function: List.hd, List.tl, Option.get *)
-    if Refactoring_helpers.str_contains fn_body_str "List.hd"
-       || Refactoring_helpers.str_contains fn_body_str "List.tl"
-       || Refactoring_helpers.str_contains fn_body_str "Option.get" then
+    let calls_partial =
+      List.exists
+        (fun (r : Source_file.reference) ->
+           r.Source_file.ref_segments = [ "List"; "hd" ]
+           || r.Source_file.ref_segments = [ "List"; "tl" ]
+           || r.Source_file.ref_segments = [ "Option"; "get" ])
+        fn_refs
+    in
+    if calls_partial then
       emit {
         smell_id = "Partial_Function";
         category = Types;
@@ -217,7 +249,6 @@ let detect_function_smells ~(file : string) ~(content : string)
         }) vd.Source_file.vd_params;
 
     (* 8. Swallowed_Exception & Broad_Exception_Handler *)
-    let is_detector = String.ends_with ~suffix:"smell_detector.ml" file || String.ends_with ~suffix:"smell_detector_functions.ml" file in
     if not is_detector then begin
       if Refactoring_helpers.str_contains fn_body_str "with _ -> ()"
          || Refactoring_helpers.str_contains fn_body_str "with _ -> None"
