@@ -102,27 +102,41 @@
 Текущее состояние архитектуры: строгое разделение DDD и гексагональная архитектура (Ports & Adapters) уже заложены. Для поддержания идеальной чистоты кодовой базы определены следующие задачи:
 
 ### 1. Декомпозиция CLI и роутера (`lib/cli/command_router.ml`)
-- [ ] **Вынести команды из монолитного `command_router.ml`**:
-  - `command_router.ml` сейчас содержит обработчики для всех подкоманд (`scan`, `tree`, `inspect`, `deps`, `cycles`, `report`, `plan_*`, `apply`, `preview`, `validate`, `undo`).
-  - **Цель**: создать подпапку `lib/cli/commands/`:
-    - `cmd_inspect.ml`
+- [x] **Вынести команды из монолитного `command_router.ml`**: *(Реализовано)*
+  - `command_router.ml` декомпозирован с 1211 строк до 204 строк (только регистрация Cmdliner-термов).
+  - Созданы общие утилиты `lib/cli/cli_common.ml` и специализированные модули подкоманд в `lib/cli/commands/`:
+    - `cmd_inspect.ml` (`init`, `scan`, `inspect`, `tree`)
     - `cmd_graph.ml` (`deps`, `cycles`, `report`)
-    - `cmd_plan.ml` (`plan move`, `plan rename-fn`, `plan move-fn`, `plan rename-arg`, `plan remove-arg`)
+    - `cmd_plan.ml` (все подкоманды `plan *`)
     - `cmd_lifecycle.ml` (`apply`, `preview`, `diff`, `validate`, `undo`, `status`)
-  - В главном роутере оставить только регистрацию Cmdliner-термов.
 
-### 2. Рефакторинг AST-анализатора (`lib/infrastructure/ocaml_analyzer.ml`)
-- [ ] **Разделение визиторов AST (Single Responsibility)**:
-  - Сейчас один и тот же файл отвечает за извлечение модулей, ссылок, определений функций, параметров, типов и вызовов.
-  - **Цель**: разбить на специализированные визиторы:
-    - `analyzer_module_defs.ml`
-    - `analyzer_references.ml`
-    - `analyzer_function_defs.ml`
-    - `analyzer_call_sites.ml`
+### 2. Декомпозиция доменного планировщика (`lib/domain/refactoring.ml`)
+- [x] **Модуляризация движка планирования (Single Responsibility)**: *(Реализовано)*
+  - Монолитный `refactoring.ml` сокращён с 3064 строк до 12-строчного фасада без изменения внешнего интерфейса `refactoring.mli`.
+  - Выделена подсистема `lib/domain/planning/`:
+    - `refactoring_types.ml` (типы намерений `intent`, ошибок `plan_error`, сообщений и контекста `ctx`)
+    - `refactoring_helpers.ml` (чистые строковые и списочные утилиты, `call_sites_of`, `finish_edit_plan`, `partial_value_uses`)
+    - `plan_move.ml` (планирование перемещения файлов, папок и модулей с переписыванием dune)
+    - `plan_fn.ml` (`rename-fn`, `move-fn`)
+    - `plan_arg.ml` (`rename-arg`, `remove-arg`, `label-arg`, `unlabel-arg`)
+    - `plan_param_object.ml` (`introduce-param-object`)
+    - `plan_constant.ml` (`extract-constant`)
+    - `plan_type.ml` (`rename-type`)
+    - `plan_opens.ml` (`remove-unused-opens`)
+
+### 3. Рефакторинг AST-анализатора (`lib/infrastructure/ocaml_analyzer.ml`)
+- [x] **Разделение визиторов AST и парсера Dune (Single Responsibility)**: *(Реализовано)*
+  - `ocaml_analyzer.ml` сокращён с 674 строк до 294 строк, отвечая строго за сборку `Ast_iterator` и адаптер порта `Source_analyzer`.
+  - Выделен отдельный модуль `dune_analyzer.ml` для парсинга S-выражений dune и извлечения таргетов.
+  - AST-визиторы декомпозированы на специализированные модули:
+    - `analyzer_loc.ml` (позиции, диапазоны и преобразование longident)
+    - `analyzer_function_defs.ml` (извлечение параметров функций, тел и типов стрелок)
+    - `analyzer_type_defs.ml` (конструкторы, поля записей, расширения типов и исключения)
+    - `analyzer_call_sites.ml` (места вызовов, классификация аргументов и литералов)
 - [ ] **Отказ от ручной строковой манипуляции смещениями**:
   - Постепенно перевести форматирование и замену аргументов/вызовов с символьных срезов на AST-rewriting (Ppxlib / Pprintast) там, где это сохраняет исходные комментарии и форматирование кода.
 
-### 3. Обработка ошибок и предметные сообщения (`lib/domain/refactoring.ml`)
+### 4. Обработка ошибок и предметные сообщения (`lib/domain/planning/refactoring_types.ml`)
 - [ ] **Структурированный тип для ошибок валидации**:
   - Тип `plan_error` растет с каждым новым рефакторингом (`Fn_not_found`, `Arg_collision`, `Arg_in_use`, ...).
   - Разделить ошибки на категории:

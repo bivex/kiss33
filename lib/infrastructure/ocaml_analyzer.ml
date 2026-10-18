@@ -1,36 +1,11 @@
-(* OCaml and dune source analyzer, backed by compiler-libs (the exact
-   compiler version's own parser). All compiler-version coupling is
-   confined to this adapter.
-
-   OCaml analysis uses [Ast_iterator] with targeted overrides, so traversal
-   of uninteresting subtrees stays the compiler's own and survives Ast
-   additions across versions. Collected data:
-   - module definitions (structure and signature items, with dotted names
-     for nested modules),
-   - references with byte-precise locations, classified by context.
-
-   Dune files are parsed with a small s-expression parser that records
-   byte ranges, so plans can rewrite (modules ...) fields surgically. *)
+(* OCaml source analyzer adapter backed by compiler-libs.
+   Coordinates specialized AST visitors and implements Reforge_ports.Source_analyzer. *)
 
 open Reforge_domain
-
-(* ------------------------------------------------------------------ *)
-(* OCaml source analysis                                              *)
-(* ------------------------------------------------------------------ *)
-
-let loc_of_positions (a : Lexing.position) (b : Lexing.position) :
-    Source_file.loc =
-  {
-    Source_file.start_off = a.Lexing.pos_cnum;
-    end_off = b.Lexing.pos_cnum;
-    start_lnum = a.Lexing.pos_lnum;
-    start_col = a.Lexing.pos_cnum - a.Lexing.pos_bol;
-    end_lnum = b.Lexing.pos_lnum;
-    end_col = b.Lexing.pos_cnum - b.Lexing.pos_bol;
-  }
-
-let loc_of (l : Location.t) : Source_file.loc =
-  loc_of_positions l.Location.loc_start l.Location.loc_end
+open Analyzer_loc
+open Analyzer_function_defs
+open Analyzer_type_defs
+open Analyzer_call_sites
 
 let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
     Source_file.analysis =
@@ -40,6 +15,7 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
   let type_defs : Source_file.type_def list ref = ref [] in
   let refs : Source_file.reference list ref = ref [] in
   let prefix : string list ref = ref [] in
+
   let push_def name loc kind =
     defs :=
       {
@@ -49,56 +25,9 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
       }
       :: !defs
   in
-  let ctor_locs (cs : Parsetree.constructor_declaration list) : (string * Source_file.loc) list =
-    List.map
-      (fun c -> (c.Parsetree.pcd_name.Asttypes.txt, loc_of c.Parsetree.pcd_name.Asttypes.loc))
-      cs
-  in
-  let field_locs (fs : Parsetree.label_declaration list) : (string * Source_file.loc) list =
-    List.map
-      (fun f -> (f.Parsetree.pld_name.Asttypes.txt, loc_of f.Parsetree.pld_name.Asttypes.loc))
-      fs
-  in
-  let push_type_decl (td : Parsetree.type_declaration) =
-    let name = td.Parsetree.ptype_name.Asttypes.txt in
-    let kind, ctors, fields =
-      match (td.Parsetree.ptype_kind : Parsetree.type_kind) with
-      | Ptype_abstract -> (Source_file.Type_abstract, [], [])
-      | Ptype_variant cs -> (Source_file.Type_variant, ctor_locs cs, [])
-      | Ptype_record fs -> (Source_file.Type_record, [], field_locs fs)
-      | Ptype_open -> (Source_file.Type_open, [], [])
-    in
-    type_defs :=
-      {
-        Source_file.td_name = String.concat "." (!prefix @ [ name ]);
-        td_loc = loc_of td.Parsetree.ptype_name.Asttypes.loc;
-        td_kind = kind;
-        td_constructors = ctors;
-        td_fields = fields;
-      }
-      :: !type_defs
-  in
-  (* Type extensions and exceptions contribute constructor names without
-     declaring a fresh type name of their own; see push_typext below. *)
-  let push_exn (c : Parsetree.extension_constructor) =
-    let name, nloc = (c.Parsetree.pext_name.Asttypes.txt, loc_of c.Parsetree.pext_name.Asttypes.loc) in
-    type_defs :=
-      {
-        Source_file.td_name = "";
-        td_loc = nloc;
-        td_kind = Source_file.Type_variant;
-        td_constructors = [ (name, nloc) ];
-        td_fields = [];
-      }
-      :: !type_defs
-  in
-  let call_sites = ref [] in
-  let literals = ref [] in
-  let push_literal kind loc =
-    literals := { Source_file.lit_kind = kind; lit_loc = loc } :: !literals
-  in
+
   let push_val_def name loc full_loc params body_loc =
-    if !prefix = [] then (* only top-level definitions in module scope *)
+    if !prefix = [] then
       value_defs :=
         {
           Source_file.vd_name = name;
@@ -109,6 +38,7 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
         }
         :: !value_defs
   in
+
   let push_val_spec name loc full_loc params =
     if !prefix = [] then
       val_specs :=
@@ -121,79 +51,20 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
         }
         :: !val_specs
   in
+
   let push_ref segments loc ctx =
     if segments <> [] then
       refs := { Source_file.ref_segments = segments; ref_loc = loc; ref_context = ctx } :: !refs
   in
-  let rec flatten_lident = function
-    | Longident.Lident s -> [ s ]
-    | Longident.Ldot (li, s) -> flatten_lident li.txt @ [ s.txt ]
-    | Longident.Lapply (li1, li2) -> flatten_lident li1.txt @ flatten_lident li2.txt
-  in
+
   let push_lident (lid : Longident.t Asttypes.loc) ctx =
     if not lid.loc.Location.loc_ghost then
       push_ref (flatten_lident lid.Asttypes.txt) (loc_of lid.Asttypes.loc) ctx
   in
-  (* Type extensions reference the type they extend and contribute their
-     constructors to the file's exported surface. *)
-  let push_typext (path : Longident.t Asttypes.loc)
-      (cs : Parsetree.extension_constructor list) =
-    let ext_ctors =
-      List.map
-        (fun c -> (c.Parsetree.pext_name.Asttypes.txt, loc_of c.Parsetree.pext_name.Asttypes.loc))
-        cs
-    in
-    push_lident path Source_file.Ref_type;
-    type_defs :=
-      {
-        Source_file.td_name = String.concat "." (flatten_lident path.Asttypes.txt);
-        td_loc = loc_of path.Asttypes.loc;
-        td_kind = Source_file.Type_variant;
-        td_constructors = ext_ctors;
-        td_fields = [];
-      }
-      :: !type_defs
-  in
-  let rec extract_params_and_body expr =
-    match (expr.Parsetree.pexp_desc : Parsetree.expression_desc) with
-    | Pexp_function (params, _constraint, body) ->
-        let parsed_params =
-          List.filter_map
-            (fun (p : Parsetree.function_param) ->
-               match p.Parsetree.pparam_desc with
-               | Pparam_val (lbl, _def_opt, pat) ->
-                   let kind =
-                     match lbl with
-                     | Asttypes.Nolabel -> Source_file.Positional
-                     | Asttypes.Labelled s -> Source_file.Labelled s
-                     | Asttypes.Optional s -> Source_file.Optional s
-                   in
-                   let rec pat_ident pat =
-                     match (pat.Parsetree.ppat_desc : Parsetree.pattern_desc) with
-                     | Ppat_var v -> Some (v.Asttypes.txt, loc_of v.Asttypes.loc)
-                     | Ppat_constraint (p, _) -> pat_ident p
-                     | _ -> None
-                   in
-                   (match pat_ident pat with
-                    | Some (pname, ploc) ->
-                        Some
-                          {
-                            Source_file.fp_name = pname;
-                            fp_kind = kind;
-                            fp_loc = ploc;
-                            fp_full_loc = loc_of p.Parsetree.pparam_loc;
-                          }
-                    | None -> None)
-               | Pparam_newtype _ -> None)
-            params
-        in
-        (match body with
-         | Pfunction_body b ->
-             let inner_params, final_body = extract_params_and_body b in
-             (parsed_params @ inner_params, final_body)
-         | Pfunction_cases _ -> (parsed_params, Some (loc_of expr.Parsetree.pexp_loc)))
-    | _ -> ([], Some (loc_of expr.Parsetree.pexp_loc))
-  in
+
+  let call_sites = ref [] in
+  let literals = ref [] in
+
   let iterator =
     let open Ast_iterator in
     let default = Ast_iterator.default_iterator in
@@ -210,12 +81,6 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
            | Pstr_value (_rec_flag, bindings) ->
                List.iter
                  (fun vb ->
-                    let rec extract_var pat =
-                      match (pat.Parsetree.ppat_desc : Parsetree.pattern_desc) with
-                      | Ppat_var name -> Some (name.Asttypes.txt, loc_of name.Asttypes.loc)
-                      | Ppat_constraint (p, _) -> extract_var p
-                      | _ -> None
-                    in
                     match extract_var vb.Parsetree.pvb_pat with
                     | Some (name, loc) ->
                         let params, body_loc = extract_params_and_body vb.Parsetree.pvb_expr in
@@ -249,13 +114,14 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
                | Pmod_ident lid -> push_lident lid Source_file.Ref_open
                | _ -> it.module_expr it od.Parsetree.popen_expr)
            | Pstr_type (_, tds) ->
-               List.iter push_type_decl tds;
+               List.iter (fun td -> type_defs := build_type_decl ~prefix:!prefix td :: !type_defs) tds;
                default.structure_item it item
            | Pstr_typext te ->
-               push_typext te.Parsetree.ptyext_path te.Parsetree.ptyext_constructors;
+               push_lident te.Parsetree.ptyext_path Source_file.Ref_type;
+               type_defs := build_typext te.Parsetree.ptyext_path te.Parsetree.ptyext_constructors :: !type_defs;
                default.structure_item it item
            | Pstr_exception ext ->
-               push_exn ext.Parsetree.ptyexn_constructor;
+               type_defs := build_exn ext.Parsetree.ptyexn_constructor :: !type_defs;
                default.structure_item it item
            | Pstr_include incl -> (
                match (incl.Parsetree.pincl_mod.Parsetree.pmod_desc : Parsetree.module_expr_desc) with
@@ -266,31 +132,6 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
         (fun it item ->
            match (item.Parsetree.psig_desc : Parsetree.signature_item_desc) with
            | Psig_value vd ->
-               let rec extract_arrows ty =
-                 match (ty.Parsetree.ptyp_desc : Parsetree.core_type_desc) with
-                 | Ptyp_arrow (lbl, t1, t2) ->
-                     let kind =
-                       match lbl with
-                       | Asttypes.Nolabel -> Source_file.Positional
-                       | Asttypes.Labelled s -> Source_file.Labelled s
-                       | Asttypes.Optional s -> Source_file.Optional s
-                     in
-                     let name =
-                       match lbl with
-                       | Asttypes.Labelled s | Asttypes.Optional s -> s
-                       | Asttypes.Nolabel -> ""
-                     in
-                     let param =
-                       {
-                         Source_file.fp_name = name;
-                         fp_kind = kind;
-                         fp_loc = loc_of ty.Parsetree.ptyp_loc;
-                         fp_full_loc = loc_of t1.Parsetree.ptyp_loc;
-                       }
-                     in
-                     param :: extract_arrows t2
-                 | _ -> []
-               in
                let params = extract_arrows vd.Parsetree.pval_type in
                push_val_spec vd.Parsetree.pval_name.Asttypes.txt
                  (loc_of vd.Parsetree.pval_name.Asttypes.loc)
@@ -314,13 +155,14 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
            | Psig_open od ->
                push_lident od.Parsetree.popen_expr Source_file.Ref_open
            | Psig_type (_, tds) ->
-               List.iter push_type_decl tds;
+               List.iter (fun td -> type_defs := build_type_decl ~prefix:!prefix td :: !type_defs) tds;
                default.signature_item it item
            | Psig_typext te ->
-               push_typext te.Parsetree.ptyext_path te.Parsetree.ptyext_constructors;
+               push_lident te.Parsetree.ptyext_path Source_file.Ref_type;
+               type_defs := build_typext te.Parsetree.ptyext_path te.Parsetree.ptyext_constructors :: !type_defs;
                default.signature_item it item
            | Psig_exception ext ->
-               push_exn ext.Parsetree.ptyexn_constructor;
+               type_defs := build_exn ext.Parsetree.ptyexn_constructor :: !type_defs;
                default.signature_item it item
            | Psig_include incl -> (
                match (incl.Parsetree.pincl_mod.Parsetree.pmty_desc : Parsetree.module_type_desc) with
@@ -331,44 +173,14 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
         (fun it e ->
            (match (e.Parsetree.pexp_desc : Parsetree.expression_desc) with
             | Pexp_constant c ->
-                let lk =
-                  match c.Parsetree.pconst_desc with
-                  | Pconst_string (s, _, _) -> Some (Source_file.Lit_string s)
-                  | Pconst_integer (s, _) -> Some (Source_file.Lit_int s)
-                  | Pconst_float (s, _) -> Some (Source_file.Lit_float s)
-                  | Pconst_char ch -> Some (Source_file.Lit_char ch)
-                in
-                Option.iter (fun k -> push_literal k (loc_of c.Parsetree.pconst_loc)) lk
+                Option.iter
+                  (fun k -> literals := { Source_file.lit_kind = k; lit_loc = loc_of c.Parsetree.pconst_loc } :: !literals)
+                  (literal_of_constant c)
             | _ -> ());
            match (e.Parsetree.pexp_desc : Parsetree.expression_desc) with
            | Pexp_ident lid -> push_lident lid Source_file.Ref_value
            | Pexp_apply (fn, args) ->
-               let fn_segs =
-                 match (fn.Parsetree.pexp_desc : Parsetree.expression_desc) with
-                 | Pexp_ident lid -> flatten_lident lid.Asttypes.txt
-                 | _ -> []
-               in
-               if fn_segs <> [] then begin
-                 let ca_args =
-                   List.map
-                     (fun (lbl, (arg_e : Parsetree.expression)) ->
-                        let kind =
-                          match lbl with
-                          | Asttypes.Nolabel -> Source_file.Positional
-                          | Asttypes.Labelled s -> Source_file.Labelled s
-                          | Asttypes.Optional s -> Source_file.Optional s
-                        in
-                        { Source_file.ca_kind = kind; ca_loc = loc_of arg_e.Parsetree.pexp_loc })
-                     args
-                 in
-                 call_sites :=
-                   {
-                     Source_file.cs_fn_segments = fn_segs;
-                     cs_fn_loc = loc_of fn.Parsetree.pexp_loc;
-                     cs_args = ca_args;
-                   }
-                   :: !call_sites
-               end;
+               Option.iter (fun cs -> call_sites := cs :: !call_sites) (call_site_of_apply fn args);
                default.expr it e
            | Pexp_construct (lid, arg) ->
                push_lident lid Source_file.Ref_constructor;
@@ -466,197 +278,6 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
       Source_file.failed_analysis
         (Printf.sprintf "%s: parse failed: %s" path (Printexc.to_string e)))
 
-(* ------------------------------------------------------------------ *)
-(* Dune s-expressions                                                 *)
-(* ------------------------------------------------------------------ *)
-
-type sexp =
-  | Atom of string * int * int   (* text, start, stop *)
-  | List of int * int * sexp list
-
-let sexp_start = function Atom (_, s, _) -> s | List (s, _, _) -> s
-let sexp_stop = function Atom (_, _, e) -> e | List (_, e, _) -> e
-
-exception Sexp_error of string
-
-let parse_sexp (content : string) : sexp list =
-  let n = String.length content in
-  let i = ref 0 in
-  let peek () = if !i < n then Some content.[!i] else None in
-  let advance () = incr i in
-  let skip_ws () =
-    let rec go () =
-      match peek () with
-      | Some (' ' | '\t' | '\r' | '\n') -> advance (); go ()
-      | Some ';' ->
-          (* line comment *)
-          while !i < n && content.[!i] <> '\n' do incr i done;
-          go ()
-      | _ -> ()
-    in
-    go ()
-  in
-  let is_atom_char c =
-    match c with ' ' | '\t' | '\r' | '\n' | '(' | ')' | ';' | '"' | '#' -> false | _ -> true
-  in
-  let parse_string () =
-    let start = !i in
-    advance (); (* opening quote *)
-    let buf = Buffer.create 16 in
-    let rec go () =
-      if !i >= n then raise (Sexp_error "unterminated string in dune file");
-      (match content.[!i] with
-       | '"' -> advance ()
-       | '\\' when !i + 1 < n ->
-           advance ();
-           Buffer.add_char buf content.[!i];
-           advance ();
-           go ()
-       | c ->
-           Buffer.add_char buf c;
-           advance ();
-           go ())
-    in
-    go ();
-    Atom (Buffer.contents buf, start, !i)
-  in
-  let rec parse_item () =
-    skip_ws ();
-    match peek () with
-    | None -> raise (Sexp_error "unexpected end of dune file")
-    | Some '(' ->
-        let start = !i in
-        advance ();
-        let rec go acc =
-          skip_ws ();
-          match peek () with
-          | Some ')' -> advance (); List (start, !i, List.rev acc)
-          | None -> raise (Sexp_error "unterminated list in dune file")
-          | _ -> go (parse_item () :: acc)
-        in
-        go []
-    | Some '"' -> parse_string ()
-    | Some '#' when !i + 1 < n && content.[!i + 1] = '|' ->
-        (* block comment #| ... |# *)
-        advance ();
-        advance ();
-        let depth = ref 1 in
-        while !depth > 0 && !i < n do
-          if content.[!i] = '#' && !i + 1 < n && content.[!i + 1] = '|' then begin
-            incr depth; advance (); advance ()
-          end
-          else if content.[!i] = '|' && !i + 1 < n && content.[!i + 1] = '#' then begin
-            decr depth; advance (); advance ()
-          end
-          else advance ()
-        done;
-        parse_item ()
-    | Some _ ->
-        let start = !i in
-        while !i < n && is_atom_char content.[!i] do incr i done;
-        if !i = start then raise (Sexp_error (Printf.sprintf "unexpected character at offset %d" !i));
-        Atom (String.sub content start (!i - start), start, !i)
-  in
-  let rec go acc =
-    skip_ws ();
-    if !i >= n then List.rev acc else go (parse_item () :: acc)
-  in
-  go []
-
-let sexp_atoms = function Atom (t, _, _) -> Some t | List _ -> None
-
-let sexp_list_of = function List (_, _, l) -> Some l | Atom _ -> None
-
-let find_field (name : string) (items : sexp list) : sexp option =
-  List.find_map
-    (function
-      | List (_, _, Atom (t, _, _) :: _) as s when t = name -> Some s
-      | _ -> None)
-    items
-
-let find_field_args (name : string) (items : sexp list) : sexp list option =
-  List.find_map
-    (function
-      | List (_, _, Atom (t, _, _) :: args) when t = name -> Some args
-      | _ -> None)
-    items
-
-let parse_modules_field (m : sexp) : Repository.modules_field =
-  let spec =
-    match sexp_list_of m with
-    | None -> Repository.Ms_standard
-    | Some (_ :: rest) -> (
-        match rest with
-        | [ Atom (":standard", _, _) ] -> Repository.Ms_standard
-        | List (_, _, (Atom (":standard", _, _) :: Atom ("\\", _, _) :: excl)) :: _ ->
-            Repository.Ms_difference
-              (List.filter_map sexp_atoms excl |> List.sort_uniq compare)
-        | List (_, _, (Atom (":standard", _, _) :: _)) :: _ -> Repository.Ms_standard
-        | atoms when List.for_all (fun a -> sexp_atoms a <> None) atoms ->
-            Repository.Ms_explicit (List.filter_map sexp_atoms atoms)
-        | _ -> Repository.Ms_standard)
-    | Some [] -> Repository.Ms_explicit []
-  in
-  { Repository.mf_spec = spec; mf_loc = Some (sexp_start m, sexp_stop m) }
-
-let parse_wrapped (items : sexp list) : bool option =
-  match find_field_args "wrapped" items with
-  | Some (Atom ("true", _, _) :: _) -> Some true
-  | Some (Atom ("false", _, _) :: _) -> Some false
-  | _ -> None
-
-let parse_target (kind : Repository.target_kind) (items : sexp list) :
-    Repository.target list =
-  let modules =
-    match find_field "modules" items with
-    | Some m -> parse_modules_field m
-    | None -> { Repository.mf_spec = Repository.Ms_standard; mf_loc = None }
-  in
-  let wrapped = parse_wrapped items in
-  let names =
-    match find_field_args "name" items with
-    | Some (Atom (n, _, _) :: _) -> [ n ]
-    | _ -> (
-        match find_field_args "names" items with
-        | Some (List (_, _, atoms) :: _) -> List.filter_map sexp_atoms atoms
-        | Some args -> List.filter_map sexp_atoms args
-        | None -> [])
-  in
-  List.map (fun n -> { Repository.tg_name = n; tg_kind = kind; tg_modules = modules; tg_wrapped = wrapped }) names
-
-let parse_dune_content (content : string) :
-    Repository.target list * string option =
-  match parse_sexp content with
-  | exception Sexp_error msg -> ([], None)  (* malformed: no targets extracted *)
-  | stanzas ->
-      let targets =
-        List.filter_map
-          (fun stanza ->
-             match stanza with
-             | List (_, _, Atom (name, _, _) :: fields) -> (
-                 match name with
-                 | "library" -> Some (parse_target Repository.Tg_library fields)
-                 | "executable" | "executables" | "test" | "tests" ->
-                     Some (parse_target Repository.Tg_executable fields)
-                 | _ -> None)
-             | _ -> None)
-          stanzas
-        |> List.concat
-        |> List.sort (fun a b -> compare a.Repository.tg_name b.Repository.tg_name)
-      in
-      let include_subdirs =
-        List.find_map
-          (fun stanza ->
-             match stanza with
-             | List (_, _, [ Atom ("include_subdirs", _, _); Atom (mode, _, _) ]) ->
-                 Some mode
-             | _ -> None)
-          stanzas
-      in
-      (targets, include_subdirs)
-
-(* ------------------------------------------------------------------ *)
-
 module Ocaml_analyzer : Reforge_ports.Source_analyzer.S = struct
   type t = unit
 
@@ -667,7 +288,7 @@ module Ocaml_analyzer : Reforge_ports.Source_analyzer.S = struct
     let is_interface = ext = "mli" in
     analyze_content ~path ~is_interface content
 
-  let parse_dune () ~content = parse_dune_content content
+  let parse_dune () ~content = Dune_analyzer.parse_dune_content content
 end
 
 let ocaml_analyzer = (module Ocaml_analyzer : Reforge_ports.Source_analyzer.S)

@@ -1,2 +1,4 @@
 (library
  (name reforge_domain))
+
+(include_subdirs unqualified)

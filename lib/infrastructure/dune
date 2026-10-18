@@ -2,3 +2,5 @@
  (name reforge_infra)
  (libraries reforge_ports reforge_domain unix yojson compiler-libs.common)
  (flags (:standard -w -70)))
+
+(include_subdirs unqualified)
