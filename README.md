@@ -85,7 +85,7 @@ eval $(opam env)
 dune build @all
 ```
 
-Run tests:
+Run tests (59 unit & e2e integration tests):
 ```bash
 dune runtest
 ```
@@ -116,6 +116,7 @@ reforge [COMMAND] [OPTIONS]
 | `reforge inspect <FILE>` | Deep inspection of an OCaml file: defined modules, references, and Dune scope forms. |
 | `reforge deps [--dot]` | Show the module dependency graph (or output Graphviz DOT). |
 | `reforge cycles` | Detect module dependency cycles with Tarjan SCC. |
+| `reforge smells [<PATH>]` | Run Clean Code smell detection engine across 12 categories with actionable refactoring suggestions. |
 | `reforge report` | Run architectural linter (cycles, unassigned sources, module drift, missing interfaces). |
 
 ### Refactoring Workflow
@@ -131,6 +132,9 @@ reforge [COMMAND] [OPTIONS]
 | `reforge plan extract-constant <FILE> <LIT> <NAME>` | Plan extracting repeated magic literal strings/numbers into a top-level constant. |
 | `reforge plan rename-type <FILE> <OLD> <NEW>` | Plan renaming a type across declarations, type annotations, and `.mli` interfaces repo-wide. |
 | `reforge plan remove-unused-opens <FILE>` | Plan dropping `open` directives whose module is never used unqualified in the file. |
+| `reforge plan qualify-open <FILE> <MODULE>` | Plan replacing top-level `open Module` with qualified `Module.ident` references throughout the file. |
+| `reforge plan wrap-primitive <FILE> <FN> <ARG> <NEW_TYPE>` | Plan wrapping primitive types into a strongly-typed domain record/variant, eliminating Primitive Obsession. |
+| `reforge plan replace-exception-with-result <FILE> <FN>` | Plan modernizing legacy `failwith` / `invalid_arg` into explicit `(res, string) result` return types with call site updates. |
 | `reforge plan introduce-param-object <FILE> <FN> --args <A,B,...> --record <NAME>` | Plan grouping contiguous parameters into a record type with `.mli` sync and call site rewriting (incl. punning). |
 | `reforge plan extract-fn <FILE> <RANGE> <NEW_FN_NAME>` | Plan extracting an expression or statement range into a top-level function, automatically computing free variables as parameters and substituting call sites. |
 | `reforge plan decompose-match <FILE> <FN>` | Plan extracting branches of a pattern match into dedicated pure handler functions (`handle_<fn>_<pat>`), reducing cyclomatic complexity. |
@@ -140,6 +144,9 @@ reforge [COMMAND] [OPTIONS]
 | `reforge plan rename-module <SRC_MODULE> <NEW_MODULE> [--file=FILE]` | Plan renaming a file-level module (with file moves, dune updates, and reference rewrites) or an inner submodule. |
 | `reforge plan reorder-args <FILE> <FN> <NEW_ORDER>` | Plan reordering parameters of a function in definition, companion `.mli`, and call sites repo-wide. |
 | `reforge plan remove-unused-fn <FILE> <FN>` | Plan removing an unused private function with no callers in the repository. |
+| `reforge plan extract-mli <FILE>` | Plan generating a clean companion `.mli` interface from an existing `.ml` implementation file. |
+| `reforge plan sync-mli <FILE>` | Plan synchronizing companion `.mli` with `.ml` implementation, adding missing signatures and removing obsolete ones. |
+| `reforge plan split-module <FILE> --submodule <NAME> --functions <FNS>` | Plan splitting a large module into cohesive submodules, moving selected functions and updating call sites and Dune rules. |
 | `reforge preview [PLAN]` | Show byte-precise unified diffs and operations of a plan (defaults to latest). |
 | `reforge diff [--plan=PLAN]` | Show unified diffs for a plan or applied changes. |
 | `reforge apply [PLAN]` | Execute the plan transactionally with automatic backups. |
@@ -535,8 +542,137 @@ $ reforge apply
 $ reforge validate
 ```
 
----
+### 20. Qualify Module Opens
 
+Replace wildcard module opens (`open Module`) with fully qualified references (`Module.ident`), preventing namespace pollution and name clashes:
+
+```bash
+$ reforge plan qualify-open lib/calc.ml List
+created .reforge/plans/plan-0019.json
+  qualify open List in lib/calc.ml (3 occurrences qualified)
+  operations:
+    edit  lib/calc.ml (4 edits)
+
+$ reforge preview
+$ reforge apply
+```
+
+### 21. Wrap Primitive Types
+
+Eliminate **Primitive Obsession** by promoting raw primitives (`int`, `string`, etc.) into strongly-typed domain records or single-constructor variants (`type user_id = User_id of int`):
+
+```bash
+$ reforge plan wrap-primitive lib/user.ml get_account id user_id
+created .reforge/plans/plan-0020.json
+  wrap primitive id:int into user_id in lib/user.ml:get_account (3 files edited)
+  operations:
+    edit  lib/user.ml (3 edits)
+    edit  lib/user.mli (1 edits)
+    edit  bin/main.ml (2 edits)
+
+$ reforge preview
+$ reforge apply
+```
+
+### 22. Replace Exceptions with Result Types
+
+Modernize legacy exception-based error handling (`failwith`, `invalid_arg`, `raise`) into idiomatic, total `(res, string) result` return types with automatic call-site wrapping:
+
+```bash
+$ reforge plan replace-exception-with-result lib/safe.ml compute
+created .reforge/plans/plan-0021.json
+  replace exceptions in compute with (res, string) result in lib/safe.ml (3 files edited)
+  operations:
+    edit  lib/safe.ml (2 edits)
+    edit  lib/safe.mli (1 edits)
+    edit  bin/main.ml (1 edits)
+
+$ reforge preview
+$ reforge apply
+$ reforge validate
+```
+
+### 23. Extract Interface (`.mli`)
+
+Generate a clean, minimal companion `.mli` interface from an implementation `.ml` file, encapsulating internal implementation details:
+
+```bash
+$ reforge plan extract-mli lib/service.ml
+created .reforge/plans/plan-0022.json
+  extract interface lib/service.mli from lib/service.ml (4 val specs)
+  operations:
+    create lib/service.mli
+
+$ reforge apply
+```
+
+### 24. Synchronize Interface (`.mli`)
+
+Keep companion `.mli` files in sync with `.ml` implementation changes by automatically generating missing signatures and pruning dead ones:
+
+```bash
+$ reforge plan sync-mli lib/service.ml
+created .reforge/plans/plan-0023.json
+  sync lib/service.mli with lib/service.ml (1 added, 0 removed)
+  operations:
+    edit  lib/service.mli (1 edits)
+
+$ reforge apply
+```
+
+### 25. Split Large Module into Submodules
+
+Decompose large, multi-responsibility modules into cohesive, focused submodules with automatic Dune rules updates and call site rewrites:
+
+```bash
+$ reforge plan split-module lib/api.ml --submodule Fetcher --functions fetch,fetch_json
+created .reforge/plans/plan-0024.json
+  split functions [fetch, fetch_json] from lib/api.ml into lib/fetcher.ml (4 files edited)
+  operations:
+    create lib/fetcher.ml
+    edit  lib/api.ml (2 edits)
+    edit  lib/dune (1 edits)
+    edit  bin/main.ml (2 edits)
+
+$ reforge preview
+$ reforge apply
+$ reforge validate
+```
+
+### 26. Clean Code Smell Detection
+
+Run comprehensive static smell analysis based on the Clean Code Smell Detection specification for OCaml. Inspects code across 12 categories, prioritizes findings by severity (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`), and provides actionable `reforge plan` commands to resolve each smell:
+
+```bash
+# Scan whole repository
+$ reforge smells
+
+# Filter by severity and target directory
+$ reforge smells --severity high lib/
+
+# Filter by smell category
+$ reforge smells --category functions lib/
+
+# Output structured JSON for CI integration
+$ reforge smells --json lib/
+```
+
+Example report output:
+```
+Clean Code Smells: 10 detected (0 critical, 10 high, 0 medium, 0 low)
+
+[HIGH] High_Cyclomatic_Complexity in lib/infrastructure/analyzer_call_sites.ml:13-34 (collect_pat_vars_with_loc)
+  Evidence:  cyclomatic complexity of 'collect_pat_vars_with_loc' is 21
+  Threshold: cyclomatic_complexity > 10 (confidence: 0.95)
+  Suggested: reforge plan decompose-match lib/infrastructure/analyzer_call_sites.ml collect_pat_vars_with_loc or extract-fn
+
+[HIGH] Long_Function in lib/infrastructure/dune_analyzer.ml:14-96 (parse_sexp)
+  Evidence:  function 'parse_sexp' spans 83 lines
+  Threshold: function_lines > 50 (confidence: 1.00)
+  Suggested: reforge plan extract-fn lib/infrastructure/dune_analyzer.ml 14-96 <NEW_FN_NAME>
+```
+
+---
 
 ## Exit Codes
 
