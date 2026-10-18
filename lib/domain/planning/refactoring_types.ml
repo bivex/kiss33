@@ -46,6 +46,19 @@ type intent =
       file : string;
       fn_name : string;
     }
+  | Qualify_open of {
+      file : string;
+      mod_name : string;
+    }
+  | Wrap_primitive of {
+      file : string;
+      type_name : string;
+      primitive : string;
+    }
+  | Replace_exception_with_result of {
+      file : string;
+      fn_name : string;
+    }
 
 type plan_error =
   | Src_not_found of string
@@ -103,6 +116,7 @@ type plan_error =
   | Fn_is_exported of string * string
   | Fn_in_use of string * string
   | Mutually_recursive_binding of string * string
+  | No_exception_to_replace of string * string
 
 let pe_message = function
   | Src_not_found p -> Printf.sprintf "source not found in repository: %s" p
@@ -225,6 +239,8 @@ let pe_message = function
       Printf.sprintf "cannot remove function '%s': it is referenced in %s" fn user_file
   | Mutually_recursive_binding (f, fn) ->
       Printf.sprintf "cannot remove function '%s' (%s): it is part of a mutually recursive let binding" fn f
+  | No_exception_to_replace (f, fn) ->
+      Printf.sprintf "no exception-raising expressions found in function '%s' of %s" fn f
 
 type ctx = {
   repo : Repository.t;

@@ -46,6 +46,19 @@ type intent =
       file : string;
       fn_name : string;
     }
+  | Qualify_open of {
+      file : string;
+      mod_name : string;
+    }
+  | Wrap_primitive of {
+      file : string;
+      type_name : string;
+      primitive : string;
+    }
+  | Replace_exception_with_result of {
+      file : string;
+      fn_name : string;
+    }
 
 type plan_error =
   | Src_not_found of string
@@ -103,6 +116,7 @@ type plan_error =
   | Fn_is_exported of string * string
   | Fn_in_use of string * string
   | Mutually_recursive_binding of string * string
+  | No_exception_to_replace of string * string
 
 val pe_message : plan_error -> string
 
@@ -286,3 +300,26 @@ val plan_remove_unused_fn :
   (Change_plan.t, plan_error) result
 (** Remove an unused private function that is not exported in .mli and has no call sites
     or references in the repository. *)
+
+val plan_qualify_open :
+  ctx:ctx ->
+  file:string ->
+  mod_name:string ->
+  (Change_plan.t, plan_error) result
+(** Qualify all references to identifiers exported by an opened module, and drop
+    the open directive to prevent namespace pollution. *)
+
+val plan_wrap_primitive :
+  ctx:ctx ->
+  file:string ->
+  type_name:string ->
+  primitive:string ->
+  (Change_plan.t, plan_error) result
+(** Introduce a domain value-object type wrapping a primitive type (string, int, etc.). *)
+
+val plan_replace_exception_with_result :
+  ctx:ctx ->
+  file:string ->
+  fn_name:string ->
+  (Change_plan.t, plan_error) result
+(** Replace exception-raising constructs in a function with Result-returning Ok/Error values. *)

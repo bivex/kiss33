@@ -283,4 +283,47 @@ let run_plan_remove_unused_fn ~rt ~json root file fn_name =
   | Ok (plan, path) ->
       emit_plan_created ~command:"plan remove-unused-fn" ~json plan path
 
+let run_plan_qualify_open ~rt ~json root file mod_name =
+  if file = "" || mod_name = "" then begin
+    let msg = "missing required arguments: FILE MODULE" in
+    if json then (emit_error_json ~command:"plan qualify-open" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_qualify_open ~rt ~config ~root ~file ~mod_name () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan qualify-open" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan qualify-open" ~json plan path
+
+let run_plan_wrap_primitive ~rt ~json root file type_name primitive =
+  if file = "" || type_name = "" || primitive = "" then begin
+    let msg = "missing required arguments: FILE TYPE_NAME PRIMITIVE" in
+    if json then (emit_error_json ~command:"plan wrap-primitive" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_wrap_primitive ~rt ~config ~root ~file ~type_name ~primitive () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan wrap-primitive" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan wrap-primitive" ~json plan path
+
+let run_plan_replace_exception_with_result ~rt ~json root file fn_name =
+  if file = "" || fn_name = "" then begin
+    let msg = "missing required arguments: FILE FN" in
+    if json then (emit_error_json ~command:"plan replace-exception-with-result" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_replace_exception_with_result ~rt ~config ~root ~file ~fn_name () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan replace-exception-with-result" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan replace-exception-with-result" ~json plan path
+
+
 

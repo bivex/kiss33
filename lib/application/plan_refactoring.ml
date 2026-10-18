@@ -349,6 +349,48 @@ let plan_remove_unused_fn ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~
       | Error e -> Error e
       | Ok path -> Ok (plan, path))
 
+let plan_qualify_open ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
+    ~file ~mod_name () : (Change_plan.t * string, string) result =
+  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let store_t = St.create ~root in
+  let id = St.next_plan_id store_t in
+  let command = Printf.sprintf "reforge plan qualify-open %s %s" file mod_name in
+  let* ctx = make_ctx ~rt ~config ~root ~id ~command in
+  match Refactoring.plan_qualify_open ~ctx ~file ~mod_name with
+  | Error e -> Error (Refactoring.pe_message e)
+  | Ok plan -> (
+      match St.save_plan store_t plan with
+      | Error e -> Error e
+      | Ok path -> Ok (plan, path))
+
+let plan_wrap_primitive ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
+    ~file ~type_name ~primitive () : (Change_plan.t * string, string) result =
+  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let store_t = St.create ~root in
+  let id = St.next_plan_id store_t in
+  let command = Printf.sprintf "reforge plan wrap-primitive %s %s %s" file type_name primitive in
+  let* ctx = make_ctx ~rt ~config ~root ~id ~command in
+  match Refactoring.plan_wrap_primitive ~ctx ~file ~type_name ~primitive with
+  | Error e -> Error (Refactoring.pe_message e)
+  | Ok plan -> (
+      match St.save_plan store_t plan with
+      | Error e -> Error e
+      | Ok path -> Ok (plan, path))
+
+let plan_replace_exception_with_result ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
+    ~file ~fn_name () : (Change_plan.t * string, string) result =
+  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let store_t = St.create ~root in
+  let id = St.next_plan_id store_t in
+  let command = Printf.sprintf "reforge plan replace-exception-with-result %s %s" file fn_name in
+  let* ctx = make_ctx ~rt ~config ~root ~id ~command in
+  match Refactoring.plan_replace_exception_with_result ~ctx ~file ~fn_name with
+  | Error e -> Error (Refactoring.pe_message e)
+  | Ok plan -> (
+      match St.save_plan store_t plan with
+      | Error e -> Error e
+      | Ok path -> Ok (plan, path))
+
 (* All plans with their derived status. *)
 let list_status ~(rt : Reforge_ports.Runtime.t) ~root () :
     ((Change_plan.t * Change_plan.status) list, string) result =

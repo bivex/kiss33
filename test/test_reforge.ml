@@ -1957,6 +1957,127 @@ let test_remove_unused_fn_errors () =
    | Error msg -> Alcotest.(check bool) "error not found" true (str_contains msg "function 'nonexistent' not found")
    | Ok _ -> Alcotest.fail "expected error for unknown function")
 
+let test_e2e_qualify_open () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/math.ml" "let double x = x * 2\n";
+  write "lib/math.mli" "val double : int -> int\n";
+  write "lib/calc.ml" "open Sample_lib.Math\nlet test a = double a\n";
+
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_qualify_open ~rt:runtime ~config ~root
+      ~file:"lib/calc.ml" ~mod_name:"Sample_lib.Math" ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_qualify_open failed: " ^ e)
+  | Ok (plan, _path) ->
+      Alcotest.(check int) "1 file touched" 1 (List.length plan.cp_ops);
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       | Ok applied ->
+           Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
+           let calc_c = In_channel.with_open_bin (Filename.concat root "lib/calc.ml") In_channel.input_all in
+           Alcotest.(check bool) "open removed" false (str_contains calc_c "open Sample_lib.Math");
+           Alcotest.(check bool) "call qualified" true (str_contains calc_c "Math.double a");
+           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+            | Error e -> Alcotest.fail ("validate failed: " ^ e)
+            | Ok checks ->
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+            | Error e -> Alcotest.fail ("undo failed: " ^ e)
+            | Ok _ ->
+                let restored = In_channel.with_open_bin (Filename.concat root "lib/calc.ml") In_channel.input_all in
+                Alcotest.(check bool) "calc.ml restored" true (str_contains restored "open Sample_lib.Math")))
+
+let test_e2e_wrap_primitive () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/user.ml" "let get_name () = \"alice\"\n";
+  write "lib/user.mli" "val get_name : unit -> string\n";
+
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_wrap_primitive ~rt:runtime ~config ~root
+      ~file:"lib/user.ml" ~type_name:"user_id" ~primitive:"string" ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_wrap_primitive failed: " ^ e)
+  | Ok (plan, _path) ->
+      Alcotest.(check int) "2 files touched" 2 (List.length plan.cp_ops);
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       | Ok applied ->
+           Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
+           let user_c = In_channel.with_open_bin (Filename.concat root "lib/user.ml") In_channel.input_all in
+           let mli_c = In_channel.with_open_bin (Filename.concat root "lib/user.mli") In_channel.input_all in
+           Alcotest.(check bool) "type in user.ml" true (str_contains user_c "type user_id = User_id of string");
+           Alcotest.(check bool) "type in user.mli" true (str_contains mli_c "type user_id = User_id of string");
+           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+            | Error e -> Alcotest.fail ("validate failed: " ^ e)
+            | Ok checks ->
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+            | Error e -> Alcotest.fail ("undo failed: " ^ e)
+            | Ok _ ->
+                let restored = In_channel.with_open_bin (Filename.concat root "lib/user.ml") In_channel.input_all in
+                Alcotest.(check bool) "user.ml restored" false (str_contains restored "type user_id")))
+
+let test_e2e_replace_exception_with_result () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/safe.ml" "let divide a b = if b = 0 then failwith \"division by zero\" else a / b\n";
+  write "lib/safe.mli" "val divide : int -> int -> int\n";
+
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_replace_exception_with_result ~rt:runtime ~config ~root
+      ~file:"lib/safe.ml" ~fn_name:"divide" ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_replace_exception_with_result failed: " ^ e)
+  | Ok (plan, _path) ->
+      Alcotest.(check int) "2 files touched" 2 (List.length plan.cp_ops);
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       | Ok applied ->
+           Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
+           let safe_c = In_channel.with_open_bin (Filename.concat root "lib/safe.ml") In_channel.input_all in
+           let mli_c = In_channel.with_open_bin (Filename.concat root "lib/safe.mli") In_channel.input_all in
+           Alcotest.(check bool) "Error returned in safe.ml" true (str_contains safe_c "Error \"division by zero\"");
+           Alcotest.(check bool) "Ok returned in safe.ml" true (str_contains safe_c "Ok (a / b)");
+           Alcotest.(check bool) "signature updated in safe.mli" true (str_contains mli_c "(int, string) result");
+           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+            | Error e -> Alcotest.fail ("validate failed: " ^ e)
+            | Ok checks ->
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+            | Error e -> Alcotest.fail ("undo failed: " ^ e)
+            | Ok _ ->
+                let restored = In_channel.with_open_bin (Filename.concat root "lib/safe.ml") In_channel.input_all in
+                Alcotest.(check bool) "safe.ml restored" true (str_contains restored "failwith")))
+
 (* ------------------------------------------------------------------ *)
 (* Test runner                                                        *)
 (* ------------------------------------------------------------------ *)
@@ -2022,6 +2143,9 @@ let () =
           Alcotest.test_case "reorder-args errors" `Quick test_reorder_args_errors;
           Alcotest.test_case "e2e remove-unused-fn" `Quick test_e2e_remove_unused_fn;
           Alcotest.test_case "remove-unused-fn errors" `Quick test_remove_unused_fn_errors;
+          Alcotest.test_case "e2e qualify-open" `Quick test_e2e_qualify_open;
+          Alcotest.test_case "e2e wrap-primitive" `Quick test_e2e_wrap_primitive;
+          Alcotest.test_case "e2e replace-exception-with-result" `Quick test_e2e_replace_exception_with_result;
           Alcotest.test_case "stale plan rejection" `Quick test_stale_plan_rejection;
         ] );
     ]

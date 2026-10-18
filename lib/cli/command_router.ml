@@ -212,6 +212,31 @@ let run ~rt ~argv () : int =
        and+ fn = Arg.(value & pos 1 string "" & info [] ~docv:"FN" ~doc:"Unused function name to remove.") in
        run_plan_remove_unused_fn ~rt ~json:j r file fn)
   in
+  let plan_qualify_open_cmd =
+    mk "qualify-open" "Plan qualifying references to an opened module and dropping the open directive."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"File containing the open directive.")
+       and+ mod_name = Arg.(value & pos 1 string "" & info [] ~docv:"MODULE" ~doc:"Module name to qualify.") in
+       run_plan_qualify_open ~rt ~json:j r file mod_name)
+  in
+  let plan_wrap_primitive_cmd =
+    mk "wrap-primitive" "Plan wrapping a primitive type into a domain value object."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"File to introduce the value object in.")
+       and+ type_name = Arg.(value & pos 1 string "" & info [] ~docv:"TYPE_NAME" ~doc:"Name of the new value object type.")
+       and+ primitive = Arg.(value & pos 2 string "" & info [] ~docv:"PRIMITIVE" ~doc:"Primitive type (e.g. string, int).") in
+       run_plan_wrap_primitive ~rt ~json:j r file type_name primitive)
+  in
+  let plan_replace_exception_with_result_cmd =
+    mk "replace-exception-with-result" "Plan replacing exception-raising constructs in a function with Result returns."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"File containing the function.")
+       and+ fn = Arg.(value & pos 1 string "" & info [] ~docv:"FN" ~doc:"Function name to refactor.") in
+       run_plan_replace_exception_with_result ~rt ~json:j r file fn)
+  in
   let plan_cmd =
     Cmd.group (Cmd.info "plan" ~doc:"Create change plans.")
       [
@@ -234,6 +259,9 @@ let run ~rt ~argv () : int =
         plan_rename_module_cmd;
         plan_reorder_args_cmd;
         plan_remove_unused_fn_cmd;
+        plan_qualify_open_cmd;
+        plan_wrap_primitive_cmd;
+        plan_replace_exception_with_result_cmd;
       ]
   in
   let preview_cmd =

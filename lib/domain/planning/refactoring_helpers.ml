@@ -11,6 +11,60 @@ let starts_with_at (content : string) (off : int) (s : string) : bool =
   let m = String.length s in
   off + m <= n && String.sub content off m = s
 
+let str_contains (haystack : string) (needle : string) : bool =
+  let n = String.length haystack in
+  let m = String.length needle in
+  if m = 0 then true
+  else if m > n then false
+  else
+    let found = ref false in
+    let i = ref 0 in
+    while !i <= n - m && not !found do
+      if String.sub haystack !i m = needle then found := true else incr i
+    done;
+    !found
+
+let replace_substring ~(pattern : string) ~(replacement : string) (text : string) : string =
+  let p_len = String.length pattern in
+  let len = String.length text in
+  if p_len = 0 then text
+  else
+    let buf = Buffer.create (len + 16) in
+    let i = ref 0 in
+    while !i < len do
+      if starts_with_at text !i pattern then (
+        Buffer.add_string buf replacement;
+        i := !i + p_len)
+      else (
+        Buffer.add_char buf text.[!i];
+        incr i)
+    done;
+    Buffer.contents buf
+
+let replace_ident ~(ident : string) ~(replacement : string) (text : string) : string =
+  let id_len = String.length ident in
+  let len = String.length text in
+  let buf = Buffer.create (len + 16) in
+  let is_id_char c =
+    (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c = '_' || c = '\''
+  in
+  let i = ref 0 in
+  while !i < len do
+    if starts_with_at text !i ident then
+      let before_ok = !i = 0 || not (is_id_char text.[!i - 1]) in
+      let after_ok = !i + id_len = len || not (is_id_char text.[!i + id_len]) in
+      if before_ok && after_ok then (
+        Buffer.add_string buf replacement;
+        i := !i + id_len)
+      else (
+        Buffer.add_char buf text.[!i];
+        incr i)
+    else (
+      Buffer.add_char buf text.[!i];
+      incr i)
+  done;
+  Buffer.contents buf
+
 let skip_blanks (content : string) (i : int) : int =
   let n = String.length content in
   let i = ref i in

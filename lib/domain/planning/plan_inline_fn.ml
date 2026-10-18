@@ -5,30 +5,6 @@
 open Refactoring_types
 open Refactoring_helpers
 
-let replace_ident ~(ident : string) ~(replacement : string) (text : string) : string =
-  let id_len = String.length ident in
-  let len = String.length text in
-  let buf = Buffer.create (len + 16) in
-  let is_id_char c =
-    (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c = '_' || c = '\''
-  in
-  let i = ref 0 in
-  while !i < len do
-    if starts_with_at text !i ident then
-      let before_ok = !i = 0 || not (is_id_char text.[!i - 1]) in
-      let after_ok = !i + id_len = len || not (is_id_char text.[!i + id_len]) in
-      if before_ok && after_ok then (
-        Buffer.add_string buf replacement;
-        i := !i + id_len)
-      else (
-        Buffer.add_char buf text.[!i];
-        incr i)
-    else (
-      Buffer.add_char buf text.[!i];
-      incr i)
-  done;
-  Buffer.contents buf
-
 let plan_inline_fn ~(ctx : ctx) ~(file : string) ~(fn_name : string) :
     (Change_plan.t, plan_error) result =
   match ctx.content_of file, ctx.analysis_of file with

@@ -18,3 +18,6 @@ include Plan_constructor
 include Plan_module
 include Plan_reorder_args
 include Plan_remove_unused_fn
+include Plan_qualify_open
+include Plan_wrap_primitive
+include Plan_replace_exception_with_result
