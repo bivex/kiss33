@@ -2,14 +2,8 @@
 
 open Smell_types
 
-(* Detect module-level and repository-level smells *)
-let detect_module_smells ~(repo : Repository.t) ~(graph : Module_graph.t)
-    ~(file : string) ~(content : string) (analysis : Source_file.analysis) : smell list =
-  let smells = ref [] in
-  let emit s = smells := s :: !smells in
-
-  let line_count = Refactoring_helpers.count_lines content in
-
+(* Check module size, god module, and public function count *)
+let check_module_size_and_god ~file ~line_count ~dep_count ~fn_count ~emit =
   (* 1. Large_Module: module_lines > 500 *)
   if line_count > 500 then
     emit {
@@ -27,8 +21,6 @@ let detect_module_smells ~(repo : Repository.t) ~(graph : Module_graph.t)
     };
 
   (* 2. God_Module: module_lines > 500 AND high dependencies/value count *)
-  let dep_count = Module_graph.dependency_count graph file in
-  let fn_count = List.length analysis.Source_file.value_defs in
   if line_count > 500 && dep_count > 8 && fn_count > 20 then
     emit {
       smell_id = "God_Module";
@@ -58,8 +50,10 @@ let detect_module_smells ~(repo : Repository.t) ~(graph : Module_graph.t)
       threshold = "exported_value_count > 30";
       confidence = 1.0;
       suggested_refactoring = Printf.sprintf "reforge plan extract-mli %s with minimal public API" file;
-    };
+    }
 
+(* Check open statements count and companion mli existence *)
+let check_module_hygiene ~file ~line_count ~fn_count ~repo ~emit (analysis : Source_file.analysis) =
   (* 4. Excessive_Open: open_count > 10 *)
   let open_refs =
     List.filter (fun (r : Source_file.reference) -> r.Source_file.ref_context = Source_file.Ref_open)
@@ -98,8 +92,10 @@ let detect_module_smells ~(repo : Repository.t) ~(graph : Module_graph.t)
         confidence = 1.0;
         suggested_refactoring = Printf.sprintf "reforge plan extract-mli %s" file;
       }
-  end;
+  end
 
+(* Check graph coupling and hexagonal layer boundaries *)
+let check_architecture_and_coupling ~file ~line_count ~dep_count ~graph ~emit =
   (* 6. High_Coupling: module_dependency_count > 12 *)
   if dep_count > 12 then
     emit {
@@ -137,6 +133,20 @@ let detect_module_smells ~(repo : Repository.t) ~(graph : Module_graph.t)
           confidence = 1.0;
           suggested_refactoring = "invert dependency using port in reforge_ports";
         }) succs
-  end;
+  end
+
+(* Detect module-level and repository-level smells *)
+let detect_module_smells ~(repo : Repository.t) ~(graph : Module_graph.t)
+    ~(file : string) ~(content : string) (analysis : Source_file.analysis) : smell list =
+  let smells = ref [] in
+  let emit s = smells := s :: !smells in
+
+  let line_count = Refactoring_helpers.count_lines content in
+  let dep_count = Module_graph.dependency_count graph file in
+  let fn_count = List.length analysis.Source_file.value_defs in
+
+  check_module_size_and_god ~file ~line_count ~dep_count ~fn_count ~emit;
+  check_module_hygiene ~file ~line_count ~fn_count ~repo ~emit analysis;
+  check_architecture_and_coupling ~file ~line_count ~dep_count ~graph ~emit;
 
   !smells
