@@ -34,35 +34,29 @@ type smell = {
   suggested_refactoring : string;
 }
 
-let string_of_category = function
-  | Functions -> "FUNCTIONS"
-  | Naming -> "NAMING"
-  | Types -> "TYPES"
-  | Control_flow -> "CONTROL_FLOW"
-  | Modules -> "MODULES"
-  | Duplication -> "DUPLICATION"
-  | State_and_effects -> "STATE_AND_EFFECTS"
-  | Dependencies -> "DEPENDENCIES"
-  | Error_handling -> "ERROR_HANDLING"
-  | Testability -> "TESTABILITY"
-  | Architecture -> "ARCHITECTURE"
-  | Refactoring_safety -> "REFACTORING_SAFETY"
+let category_table = [
+  (Functions, "FUNCTIONS");
+  (Naming, "NAMING");
+  (Types, "TYPES");
+  (Control_flow, "CONTROL_FLOW");
+  (Modules, "MODULES");
+  (Duplication, "DUPLICATION");
+  (State_and_effects, "STATE_AND_EFFECTS");
+  (Dependencies, "DEPENDENCIES");
+  (Error_handling, "ERROR_HANDLING");
+  (Testability, "TESTABILITY");
+  (Architecture, "ARCHITECTURE");
+  (Refactoring_safety, "REFACTORING_SAFETY");
+]
+
+let string_of_category c =
+  match List.assoc_opt c category_table with
+  | Some name -> name
+  | None -> "UNKNOWN"
 
 let category_of_string s =
-  match String.uppercase_ascii s with
-  | "FUNCTIONS" -> Some Functions
-  | "NAMING" -> Some Naming
-  | "TYPES" -> Some Types
-  | "CONTROL_FLOW" -> Some Control_flow
-  | "MODULES" -> Some Modules
-  | "DUPLICATION" -> Some Duplication
-  | "STATE_AND_EFFECTS" -> Some State_and_effects
-  | "DEPENDENCIES" -> Some Dependencies
-  | "ERROR_HANDLING" -> Some Error_handling
-  | "TESTABILITY" -> Some Testability
-  | "ARCHITECTURE" -> Some Architecture
-  | "REFACTORING_SAFETY" -> Some Refactoring_safety
-  | _ -> None
+  let upper = String.uppercase_ascii s in
+  List.find_map (fun (c, name) -> if name = upper then Some c else None) category_table
 
 let string_of_severity = function
   | Critical -> "CRITICAL"
