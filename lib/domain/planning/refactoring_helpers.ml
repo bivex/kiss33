@@ -65,6 +65,24 @@ let replace_ident ~(ident : string) ~(replacement : string) (text : string) : st
   done;
   Buffer.contents buf
 
+let has_ident ~(ident : string) (text : string) : bool =
+  let id_len = String.length ident in
+  let len = String.length text in
+  let is_id_char c =
+    (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c = '_' || c = '\''
+  in
+  let found = ref false in
+  let i = ref 0 in
+  while !i <= len - id_len && not !found do
+    if starts_with_at text !i ident then
+      let before_ok = !i = 0 || not (is_id_char text.[!i - 1]) in
+      let after_ok = !i + id_len = len || not (is_id_char text.[!i + id_len]) in
+      if before_ok && after_ok then found := true
+      else incr i
+    else incr i
+  done;
+  !found
+
 let skip_blanks (content : string) (i : int) : int =
   let n = String.length content in
   let i = ref i in
