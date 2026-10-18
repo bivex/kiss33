@@ -2,29 +2,38 @@
 
 open Smell_types
 
+let common_pattern_vars = [
+  "x"; "y"; "z"; "i"; "j"; "k"; "n"; "s"; "t"; "_"; "e";
+  "p"; "w"; "c"; "r"; "a"; "b"; "u"; "v"; "m"; "f"; "d";
+  "k1"; "k2"; "v1"; "v2"; "h"; "q"
+]
+
 let is_common_pattern_var name =
-  match name with
-  | "x" | "y" | "z" | "i" | "j" | "k" | "n" | "s" | "t" | "_" | "e"
-  | "p" | "w" | "c" | "r" | "a" | "b" | "u" | "v" | "m" | "f" | "d"
-  | "k1" | "k2" | "v1" | "v2" | "h" | "q" -> true
-  | _ -> false
+  List.mem name common_pattern_vars
+
+let generic_names = [
+  "data"; "temp"; "tmp"; "val_"; "result"; "item"; "obj"; "res"; "val"
+]
 
 let is_generic_name name =
-  match String.lowercase_ascii name with
-  | "data" | "temp" | "tmp" | "val_" | "result" | "item" | "obj" | "res" | "val" -> true
-  | _ -> false
+  List.mem (String.lowercase_ascii name) generic_names
 
 let confidence_high = 0.95
 let confidence_normal = 0.90
 
+let trivial_numbers = [
+  "0"; "1"; "2"; "3"; "4"; "-1"; "0.0"; "1.0"; "0."; "1."
+]
+
 let is_trivial_number s =
-  match s with
-  | "0" | "1" | "2" | "3" | "4" | "-1" | "0.0" | "1.0" | "0." | "1." -> true
-  | _ -> false
+  List.mem s trivial_numbers
+
+let trivial_strings = [
+  "\n"; " "; "\n\n"; ", "; ":"; " -> "
+]
 
 let is_trivial_string s =
-  let len = String.length s in
-  len <= 2 || s = "\n" || s = " " || s = "\n\n" || s = ", " || s = ":" || s = " -> "
+  String.length s <= 2 || List.mem s trivial_strings
 
 (* Count cyclomatic complexity in a code snippet *)
 let compute_cyclomatic_complexity (code : string) : int =
