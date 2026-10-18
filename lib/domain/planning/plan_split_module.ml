@@ -60,9 +60,10 @@ let plan_split_module ~(ctx : ctx) ~(file : string) ~(submodule : string)
                         compare a.Source_file.vd_full_loc.Source_file.start_off
                                 b.Source_file.vd_full_loc.Source_file.start_off) target_vds
                   in
-                  let first_vd = List.hd sorted_vds in
-                  let rest_vds = List.tl sorted_vds in
-                  (* For first_vd: prepend submodule_def and add the alias *)
+                  match sorted_vds with
+                  | [] -> assert false
+                  | first_vd :: rest_vds ->
+                      (* For first_vd: prepend submodule_def and add the alias *)
                   let first_s = first_vd.Source_file.vd_full_loc.Source_file.start_off in
                   let first_e = first_vd.Source_file.vd_full_loc.Source_file.end_off in
                   let first_replacement =

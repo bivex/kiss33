@@ -105,19 +105,23 @@ let plan_reorder_args ~(ctx : ctx) ~(file : string) ~(fn_name : string) ~(new_or
                           let reordered_param_slices =
                             List.map (fun idx -> List.nth param_slices idx) perm
                           in
-                          let def_start = (List.hd params).Source_file.fp_full_loc.Source_file.start_off in
-                          let def_end = (List.nth params (num_params - 1)).Source_file.fp_full_loc.Source_file.end_off in
-                          add_edit file
-                            {
-                              Change_plan.e_start_off = def_start;
-                              e_end_off = def_end;
-                              e_start_line = (List.hd params).Source_file.fp_full_loc.Source_file.start_lnum;
-                              e_end_line = (List.nth params (num_params - 1)).Source_file.fp_full_loc.Source_file.end_lnum;
-                              e_replacement = String.concat " " reordered_param_slices;
-                              e_reason =
-                                Printf.sprintf "reorder parameters of %s to [%s]" fn_name
-                                  (String.concat ", " new_order);
-                            };
+                          (match params with
+                           | first_param :: _ ->
+                               let last_param = List.nth params (num_params - 1) in
+                               let def_start = first_param.Source_file.fp_full_loc.Source_file.start_off in
+                               let def_end = last_param.Source_file.fp_full_loc.Source_file.end_off in
+                               add_edit file
+                                 {
+                                   Change_plan.e_start_off = def_start;
+                                   e_end_off = def_end;
+                                   e_start_line = first_param.Source_file.fp_full_loc.Source_file.start_lnum;
+                                   e_end_line = last_param.Source_file.fp_full_loc.Source_file.end_lnum;
+                                   e_replacement = String.concat " " reordered_param_slices;
+                                   e_reason =
+                                     Printf.sprintf "reorder parameters of %s to [%s]" fn_name
+                                       (String.concat ", " new_order);
+                                 }
+                           | [] -> ());
 
                           (* 2. Companion .mli if present *)
                           let mli_file = Filename.remove_extension file ^ ".mli" in
@@ -151,18 +155,22 @@ let plan_reorder_args ~(ctx : ctx) ~(file : string) ~(fn_name : string) ~(new_or
                                        let reordered_mli_slices =
                                          List.map (fun idx -> List.nth mli_slices idx) perm
                                        in
-                                       let mli_start = arrow_start (List.hd mli_params) in
-                                       let mli_end = (List.nth mli_params (num_params - 1)).Source_file.fp_full_loc.Source_file.end_off in
-                                       add_edit mli_file
-                                         {
-                                           Change_plan.e_start_off = mli_start;
-                                           e_end_off = mli_end;
-                                           e_start_line = (List.hd mli_params).Source_file.fp_loc.Source_file.start_lnum;
-                                           e_end_line = (List.nth mli_params (num_params - 1)).Source_file.fp_full_loc.Source_file.end_lnum;
-                                           e_replacement = String.concat " -> " reordered_mli_slices;
-                                           e_reason =
-                                             Printf.sprintf "reorder parameter types in %s val spec" fn_name;
-                                         }
+                                       (match mli_params with
+                                        | first_mli :: _ ->
+                                            let last_mli = List.nth mli_params (num_params - 1) in
+                                            let mli_start = arrow_start first_mli in
+                                            let mli_end = last_mli.Source_file.fp_full_loc.Source_file.end_off in
+                                            add_edit mli_file
+                                              {
+                                                Change_plan.e_start_off = mli_start;
+                                                e_end_off = mli_end;
+                                                e_start_line = first_mli.Source_file.fp_loc.Source_file.start_lnum;
+                                                e_end_line = last_mli.Source_file.fp_full_loc.Source_file.end_lnum;
+                                                e_replacement = String.concat " -> " reordered_mli_slices;
+                                                e_reason =
+                                                  Printf.sprintf "reorder parameter types in %s val spec" fn_name;
+                                              }
+                                        | [] -> ())
                                    | _ -> ())
                                | _ -> ())
                            | None -> ());
@@ -195,17 +203,21 @@ let plan_reorder_args ~(ctx : ctx) ~(file : string) ~(fn_name : string) ~(new_or
                                let reordered_arg_slices =
                                  List.map (fun idx -> List.nth arg_slices idx) perm
                                in
-                               let call_start = find_arg_start (List.hd call_args) in
-                               let call_end = (List.nth call_args (num_params - 1)).Source_file.ca_loc.Source_file.end_off in
-                               add_edit caller
-                                 {
-                                   Change_plan.e_start_off = call_start;
-                                   e_end_off = call_end;
-                                   e_start_line = (List.hd call_args).Source_file.ca_loc.Source_file.start_lnum;
-                                   e_end_line = (List.nth call_args (num_params - 1)).Source_file.ca_loc.Source_file.end_lnum;
-                                   e_replacement = String.concat " " reordered_arg_slices;
-                                   e_reason = Printf.sprintf "reorder arguments in %s call" fn_name;
-                                 })
+                               (match call_args with
+                                | first_arg :: _ ->
+                                    let last_arg = List.nth call_args (num_params - 1) in
+                                    let call_start = find_arg_start first_arg in
+                                    let call_end = last_arg.Source_file.ca_loc.Source_file.end_off in
+                                    add_edit caller
+                                      {
+                                        Change_plan.e_start_off = call_start;
+                                        e_end_off = call_end;
+                                        e_start_line = first_arg.Source_file.ca_loc.Source_file.start_lnum;
+                                        e_end_line = last_arg.Source_file.ca_loc.Source_file.end_lnum;
+                                        e_replacement = String.concat " " reordered_arg_slices;
+                                        e_reason = Printf.sprintf "reorder arguments in %s call" fn_name;
+                                      }
+                                 | [] -> ()))
                             sites;
 
                           let files_count =

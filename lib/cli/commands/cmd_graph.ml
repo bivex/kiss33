@@ -77,9 +77,11 @@ let run_cycles ~rt ~json root =
         | _ ->
             Printf.printf "%d cycle(s):\n" (List.length cycles);
             List.iter
-              (fun c ->
-                 print_endline
-                   (String.concat " -> " c ^ " -> " ^ List.hd c))
+              (function
+                 | head :: _ as c ->
+                     print_endline
+                       (String.concat " -> " c ^ " -> " ^ head)
+                 | [] -> ())
               cycles
       end;
       if cycles <> [] then exit exit_violations_code else 0)

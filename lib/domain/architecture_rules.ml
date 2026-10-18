@@ -52,12 +52,13 @@ let build_report (repo : Repository.t) (graph : Module_graph.t) (config : Config
   let cycle_violations =
     List.map
       (fun cyc ->
+         let first = match cyc with h :: _ -> [ h ] | [] -> [] in
          {
            v_rule = "dependency-cycle";
            v_severity = Error;
            v_message =
              Printf.sprintf "dependency cycle: %s"
-               (String.concat " -> " (cyc @ [ List.hd cyc ]));
+               (String.concat " -> " (cyc @ first));
            v_paths = cyc;
          })
       cycles

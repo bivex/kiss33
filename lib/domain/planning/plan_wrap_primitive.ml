@@ -30,15 +30,14 @@ let plan_wrap_primitive ~(ctx : ctx) ~(file : string) ~(type_name : string) ~(pr
                   file_analysis.Source_file.references
               in
               let insert_off =
-                match top_opens with
+                let sorted =
+                  List.sort
+                    (fun a b -> compare b.Source_file.ref_loc.Source_file.end_off a.Source_file.ref_loc.Source_file.end_off)
+                    top_opens
+                in
+                match sorted with
                 | [] -> 0
-                | _ ->
-                    let last_open =
-                      List.hd
-                        (List.sort
-                           (fun a b -> compare b.Source_file.ref_loc.Source_file.end_off a.Source_file.ref_loc.Source_file.end_off)
-                           top_opens)
-                    in
+                | last_open :: _ ->
                     let e = last_open.Source_file.ref_loc.Source_file.end_off in
                     let len = String.length file_content in
                     if e < len && file_content.[e] = '\n' then
@@ -66,15 +65,14 @@ let plan_wrap_primitive ~(ctx : ctx) ~(file : string) ~(type_name : string) ~(pr
                            mli_analysis.Source_file.references
                        in
                        let mli_insert_off =
-                         match mli_opens with
+                         let sorted =
+                           List.sort
+                             (fun a b -> compare b.Source_file.ref_loc.Source_file.end_off a.Source_file.ref_loc.Source_file.end_off)
+                             mli_opens
+                         in
+                         match sorted with
                          | [] -> 0
-                         | _ ->
-                             let last_open =
-                               List.hd
-                                 (List.sort
-                                    (fun a b -> compare b.Source_file.ref_loc.Source_file.end_off a.Source_file.ref_loc.Source_file.end_off)
-                                    mli_opens)
-                             in
+                         | last_open :: _ ->
                              let e = last_open.Source_file.ref_loc.Source_file.end_off in
                              let len = String.length mli_content in
                              if e < len && mli_content.[e] = '\n' then

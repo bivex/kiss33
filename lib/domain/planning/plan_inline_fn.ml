@@ -58,10 +58,9 @@ let plan_inline_fn ~(ctx : ctx) ~(file : string) ~(fn_name : string) :
                        let start_off = cs.Source_file.cs_fn_loc.Source_file.start_off in
                        let end_off =
                          if param_count = 0 then
-                           if cs.Source_file.cs_args <> [] then
-                             (* niladic function called with () *)
-                             (List.hd cs.Source_file.cs_args).Source_file.ca_loc.Source_file.end_off
-                           else cs.Source_file.cs_fn_loc.Source_file.end_off
+                           match cs.Source_file.cs_args with
+                           | first_arg :: _ -> first_arg.Source_file.ca_loc.Source_file.end_off
+                           | [] -> cs.Source_file.cs_fn_loc.Source_file.end_off
                          else
                            let last_arg = List.nth cs.Source_file.cs_args (param_count - 1) in
                            last_arg.Source_file.ca_loc.Source_file.end_off

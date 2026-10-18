@@ -58,3 +58,7 @@ val make_edit :
 val val_spec_of_value_def : content:string -> Source_file.value_def -> string
 
 val extract_type_decl : content:string -> Source_file.type_def -> string option
+
+val last_element : 'a list -> 'a option
+
+val first_element : 'a list -> 'a option

@@ -36,14 +36,13 @@ let plan_extract_constant ~(ctx : ctx) ~(file : string) ~(literal : string) ~(co
                          || (String.length literal = 3 && literal.[0] = '\'' && literal.[2] = '\'' && literal.[1] = c))
                   file_analysis.Source_file.literals
               in
-              if matches = [] then
-                Error (Literal_not_found (file, literal))
-              else
-                let first_match = List.hd matches in
-                let raw_literal =
-                  String.sub file_content first_match.lit_loc.start_off
-                    (first_match.lit_loc.end_off - first_match.lit_loc.start_off)
-                in
+              match matches with
+              | [] -> Error (Literal_not_found (file, literal))
+              | first_match :: _ ->
+                  let raw_literal =
+                    String.sub file_content first_match.lit_loc.start_off
+                      (first_match.lit_loc.end_off - first_match.lit_loc.start_off)
+                  in
                 (* Find insertion point: after the last open before the first match, or before first val_def, or 0 *)
                 let max_open_off =
                   List.fold_left

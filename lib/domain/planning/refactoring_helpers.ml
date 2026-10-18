@@ -420,3 +420,12 @@ let extract_type_decl ~content (td : Source_file.type_def) : string option =
     Some (String.trim (String.sub content kw_start (decl_end - kw_start)))
   else None
 
+let rec last_element = function
+  | [] -> None
+  | [ x ] -> Some x
+  | _ :: xs -> last_element xs
+
+let first_element = function
+  | [] -> None
+  | x :: _ -> Some x
+

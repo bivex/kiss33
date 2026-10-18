@@ -18,7 +18,7 @@ let plan_qualify_open ~(ctx : ctx) ~(file : string) ~(mod_name : string) :
               (fun (r : Source_file.reference) ->
                  r.Source_file.ref_context = Source_file.Ref_open
                  && (r.Source_file.ref_segments = mod_segs
-                     || r.Source_file.ref_segments = [ List.hd (List.rev mod_segs) ]))
+                     || r.Source_file.ref_segments = Option.to_list (last_element mod_segs)))
               analysis.Source_file.references
           in
           match matching_opens with
@@ -38,7 +38,7 @@ let plan_qualify_open ~(ctx : ctx) ~(file : string) ~(mod_name : string) :
                   |> List.filter_map (fun fe ->
                          match Repository.module_forms ctx.repo fe.Repository.fe_path with
                          | Some (_, w, c) ->
-                             if segs = w || segs = c || segs = [ List.hd (List.rev w) ] then
+                             if segs = w || segs = c || segs = Option.to_list (last_element w) then
                                Some fe.Repository.fe_path
                              else None
                          | None -> None)
@@ -80,7 +80,9 @@ let plan_qualify_open ~(ctx : ctx) ~(file : string) ~(mod_name : string) :
                     warn (Printf.sprintf "cannot statically resolve exports of %s; relying on unqualified references" mod_name);
                     []
               in
-              let qualifier = List.hd (List.rev target_open.Source_file.ref_segments) in
+              let qualifier =
+                Option.value ~default:mod_name (last_element target_open.Source_file.ref_segments)
+              in
               List.iter
                 (fun (r : Source_file.reference) ->
                    match r.Source_file.ref_context with

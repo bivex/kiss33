@@ -196,97 +196,105 @@ let plan_introduce_param_object ~(ctx : ctx) ~(file : string) ~(fn_name : string
                                       e_reason = Printf.sprintf "declare record %s" record_name;
                                     };
                                   (* 2. Definition header: one punned record pattern. *)
-                                  let first_idx = List.hd positions in
-                                  let first_p = snd (List.hd selected) in
-                                  let record_pat =
-                                    "{ "
-                                    ^ String.concat "; "
-                                        (List.map (fun (_, (p : Source_file.fn_param)) -> p.Source_file.fp_name) selected)
-                                    ^ " }"
+                                  let first_p, rest_selected =
+                                    match selected with
+                                    | (_, p) :: rest -> (p, rest)
+                                    | [] -> assert false
                                   in
-                                  add_edit file
-                                    {
-                                      Change_plan.e_start_off = first_p.Source_file.fp_full_loc.Source_file.start_off;
-                                      e_end_off = first_p.Source_file.fp_full_loc.Source_file.end_off;
-                                      e_start_line = first_p.Source_file.fp_full_loc.Source_file.start_lnum;
-                                      e_end_line = first_p.Source_file.fp_full_loc.Source_file.end_lnum;
-                                      e_replacement = record_pat;
-                                      e_reason = Printf.sprintf "group %s into %s" args_joined record_name;
-                                    };
-                                  let content_len = String.length file_content in
-                                  List.iter
-                                    (fun (_, (p : Source_file.fn_param)) ->
-                                       let s = p.Source_file.fp_full_loc.Source_file.start_off in
-                                       let e = p.Source_file.fp_full_loc.Source_file.end_off in
-                                       let s, e =
-                                         if e < content_len && file_content.[e] = ' ' then (s, e + 1)
-                                         else if s > 0 && file_content.[s - 1] = ' ' then (s - 1, e)
-                                         else (s, e)
+                                  let first_idx, rest_positions =
+                                    match positions with
+                                    | idx :: rest -> (idx, rest)
+                                    | [] -> assert false
+                                  in
+                                  let record_pat =
+                                         "{ "
+                                         ^ String.concat "; "
+                                             (List.map (fun (_, (p : Source_file.fn_param)) -> p.Source_file.fp_name) selected)
+                                         ^ " }"
                                        in
                                        add_edit file
                                          {
-                                           Change_plan.e_start_off = s;
-                                           e_end_off = e;
-                                           e_start_line = p.Source_file.fp_full_loc.Source_file.start_lnum;
-                                           e_end_line = p.Source_file.fp_full_loc.Source_file.end_lnum;
-                                           e_replacement = "";
-                                           e_reason = Printf.sprintf "fold param %s into %s" p.Source_file.fp_name record_name;
-                                         })
-                                    (List.tl selected);
-                                  (* 3. Companion .mli: declaration plus reshaped val spec. *)
-                                  (match (mli_analysis_opt, mli_content_opt) with
-                                   | Some mli_analysis, Some mli_content -> (
-                                       match List.find_opt (fun vs -> vs.Source_file.vd_name = fn_name) mli_analysis.Source_file.val_specs with
-                                       | Some vs ->
-                                           add_edit mli_file
-                                             {
-                                               Change_plan.e_start_off = vs.Source_file.vd_full_loc.Source_file.start_off;
-                                               e_end_off = vs.Source_file.vd_full_loc.Source_file.start_off;
-                                               e_start_line = vs.Source_file.vd_full_loc.Source_file.start_lnum;
-                                               e_end_line = vs.Source_file.vd_full_loc.Source_file.start_lnum;
-                                               e_replacement = decl;
-                                               e_reason = Printf.sprintf "declare record %s in interface" record_name;
-                                             };
-                                           (match List.nth_opt vs.Source_file.vd_params first_idx with
-                                            | Some mp ->
+                                           Change_plan.e_start_off = first_p.Source_file.fp_full_loc.Source_file.start_off;
+                                           e_end_off = first_p.Source_file.fp_full_loc.Source_file.end_off;
+                                           e_start_line = first_p.Source_file.fp_full_loc.Source_file.start_lnum;
+                                           e_end_line = first_p.Source_file.fp_full_loc.Source_file.end_lnum;
+                                           e_replacement = record_pat;
+                                           e_reason = Printf.sprintf "group %s into %s" args_joined record_name;
+                                         };
+                                       let content_len = String.length file_content in
+                                       List.iter
+                                         (fun (_, (p : Source_file.fn_param)) ->
+                                            let s = p.Source_file.fp_full_loc.Source_file.start_off in
+                                            let e = p.Source_file.fp_full_loc.Source_file.end_off in
+                                            let s, e =
+                                              if e < content_len && file_content.[e] = ' ' then (s, e + 1)
+                                              else if s > 0 && file_content.[s - 1] = ' ' then (s - 1, e)
+                                              else (s, e)
+                                            in
+                                            add_edit file
+                                              {
+                                                Change_plan.e_start_off = s;
+                                                e_end_off = e;
+                                                e_start_line = p.Source_file.fp_full_loc.Source_file.start_lnum;
+                                                e_end_line = p.Source_file.fp_full_loc.Source_file.end_lnum;
+                                                e_replacement = "";
+                                                e_reason = Printf.sprintf "fold param %s into %s" p.Source_file.fp_name record_name;
+                                              })
+                                         rest_selected;
+                                       (* 3. Companion .mli: declaration plus reshaped val spec. *)
+                                       (match (mli_analysis_opt, mli_content_opt) with
+                                        | Some mli_analysis, Some mli_content -> (
+                                            match List.find_opt (fun vs -> vs.Source_file.vd_name = fn_name) mli_analysis.Source_file.val_specs with
+                                            | Some vs ->
                                                 add_edit mli_file
                                                   {
-                                                    Change_plan.e_start_off = mp.Source_file.fp_loc.Source_file.start_off;
-                                                    e_end_off = mp.Source_file.fp_full_loc.Source_file.end_off;
-                                                    e_start_line = mp.Source_file.fp_loc.Source_file.start_lnum;
-                                                    e_end_line = mp.Source_file.fp_full_loc.Source_file.end_lnum;
-                                                    e_replacement = record_name;
-                                                    e_reason = Printf.sprintf "%s takes %s" fn_name record_name;
-                                                  }
-                                            | None -> ());
-                                           let mli_len = String.length mli_content in
-                                           List.iter
-                                             (fun idx ->
-                                                match List.nth_opt vs.Source_file.vd_params idx with
-                                                | Some mp ->
-                                                    let cut_s = mp.Source_file.fp_loc.Source_file.start_off in
-                                                    let cut_e_raw = mp.Source_file.fp_full_loc.Source_file.end_off in
-                                                    let rec skip_arrow i =
-                                                      if i + 4 <= mli_len && String.sub mli_content i 4 = " -> " then i + 4
-                                                      else if i + 3 <= mli_len && String.sub mli_content i 3 = "-> " then i + 3
-                                                      else if i < mli_len && (mli_content.[i] = ' ' || mli_content.[i] = '\n') then
-                                                        skip_arrow (i + 1)
-                                                      else cut_e_raw
-                                                    in
-                                                    let cut_e = skip_arrow cut_e_raw in
-                                                    add_edit mli_file
-                                                      {
-                                                        Change_plan.e_start_off = cut_s;
-                                                        e_end_off = cut_e;
-                                                        e_start_line = mp.Source_file.fp_loc.Source_file.start_lnum;
-                                                        e_end_line = mp.Source_file.fp_full_loc.Source_file.end_lnum;
-                                                        e_replacement = "";
-                                                        e_reason = Printf.sprintf "fold param %s into %s signature" (param_label mp) record_name;
-                                                      }
-                                                | None -> ())
-                                             (List.tl positions)
-                                       | None -> ())
-                                   | _ -> ());
+                                                    Change_plan.e_start_off = vs.Source_file.vd_full_loc.Source_file.start_off;
+                                                    e_end_off = vs.Source_file.vd_full_loc.Source_file.start_off;
+                                                    e_start_line = vs.Source_file.vd_full_loc.Source_file.start_lnum;
+                                                    e_end_line = vs.Source_file.vd_full_loc.Source_file.start_lnum;
+                                                    e_replacement = decl;
+                                                    e_reason = Printf.sprintf "declare record %s in interface" record_name;
+                                                  };
+                                                (match List.nth_opt vs.Source_file.vd_params first_idx with
+                                                 | Some mp ->
+                                                     add_edit mli_file
+                                                       {
+                                                         Change_plan.e_start_off = mp.Source_file.fp_loc.Source_file.start_off;
+                                                         e_end_off = mp.Source_file.fp_full_loc.Source_file.end_off;
+                                                         e_start_line = mp.Source_file.fp_loc.Source_file.start_lnum;
+                                                         e_end_line = mp.Source_file.fp_full_loc.Source_file.end_lnum;
+                                                         e_replacement = record_name;
+                                                         e_reason = Printf.sprintf "%s takes %s" fn_name record_name;
+                                                       }
+                                                 | None -> ());
+                                                let mli_len = String.length mli_content in
+                                                List.iter
+                                                  (fun idx ->
+                                                     match List.nth_opt vs.Source_file.vd_params idx with
+                                                     | Some mp ->
+                                                         let cut_s = mp.Source_file.fp_loc.Source_file.start_off in
+                                                         let cut_e_raw = mp.Source_file.fp_full_loc.Source_file.end_off in
+                                                         let rec skip_arrow i =
+                                                           if i + 4 <= mli_len && String.sub mli_content i 4 = " -> " then i + 4
+                                                           else if i + 3 <= mli_len && String.sub mli_content i 3 = "-> " then i + 3
+                                                           else if i < mli_len && (mli_content.[i] = ' ' || mli_content.[i] = '\n') then
+                                                             skip_arrow (i + 1)
+                                                           else cut_e_raw
+                                                         in
+                                                         let cut_e = skip_arrow cut_e_raw in
+                                                         add_edit mli_file
+                                                           {
+                                                             Change_plan.e_start_off = cut_s;
+                                                             e_end_off = cut_e;
+                                                             e_start_line = mp.Source_file.fp_loc.Source_file.start_lnum;
+                                                             e_end_line = mp.Source_file.fp_full_loc.Source_file.end_lnum;
+                                                             e_replacement = "";
+                                                             e_reason = Printf.sprintf "fold param %s into %s signature" (param_label mp) record_name;
+                                                           }
+                                                     | None -> ())
+                                                  rest_positions
+                                            | None -> ())
+                                        | _ -> ());
                                   (* 4. Call sites: rewrite into record literals. *)
                                   let sites = call_sites_of ~ctx ~file ~fn_name in
                                   let positional_params_before =
