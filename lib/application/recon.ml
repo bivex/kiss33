@@ -10,6 +10,80 @@ let ( let* ) = Result.bind
 
 let err fmt = Printf.ksprintf (fun s -> Error s) fmt
 
+let is_ignored (config : Config.t) (entry : string) (path : string) : bool =
+  List.mem entry config.Config.ignore_dirs
+  || List.mem path config.Config.ignore_paths
+  || entry = ".reforge"
+  || entry = ".git"
+
+let walk_dir (type a)
+    (module Fs : Reforge_ports.Filesystem.S with type t = a)
+    (fs_t : a) ~(config : Config.t) : (string list, string) result =
+  let rec walk rel acc =
+    match Fs.list_dir fs_t ~rel with
+    | Error e -> err "cannot list %s: %s" (if rel = "" then "." else rel) e
+    | Ok entries ->
+        let rec step acc = function
+          | [] -> Ok acc
+          | entry :: rest ->
+              let path = if rel = "" then entry else rel ^ "/" ^ entry in
+              if Fs.is_symlink fs_t ~rel:path then step acc rest
+              else if Fs.is_dir fs_t ~rel:path then
+                if is_ignored config entry path then step acc rest
+                else
+                  match walk path acc with
+                  | Ok acc' -> step acc' rest
+                  | Error e -> Error e
+              else step (path :: acc) rest
+        in
+        step acc entries
+  in
+  let* paths = walk "" [] in
+  Ok (List.sort compare paths)
+
+let build_file_entries (type a)
+    (module Fs : Reforge_ports.Filesystem.S with type t = a)
+    (fs_t : a) (paths : string list) : Repository.file_entry list =
+  List.filter_map
+    (fun path ->
+       match Fs.read fs_t ~rel:path with
+       | Error _ -> None (* unreadable: skip *)
+       | Ok content ->
+           Some
+             {
+               Repository.fe_path = Path.normalize path;
+               fe_kind = Source_file.file_kind_of_path path;
+               fe_size = String.length content;
+               fe_hash = Digest.to_hex (Digest.string content);
+               fe_lines = Util.count_lines content;
+             })
+    paths
+  |> List.sort (fun a b -> compare a.Repository.fe_path b.Repository.fe_path)
+
+let build_dune_scopes (type a b)
+    (module Fs : Reforge_ports.Filesystem.S with type t = a)
+    (module An : Reforge_ports.Source_analyzer.S with type t = b)
+    (fs_t : a) (an_t : b) (entries : Repository.file_entry list) : Repository.scope list =
+  List.filter_map
+    (fun fe ->
+       if fe.Repository.fe_kind = Source_file.Dune_file then
+         match Fs.read fs_t ~rel:fe.Repository.fe_path with
+         | Error _ -> None
+         | Ok content -> (
+             let targets, isd = An.parse_dune an_t ~content in
+             match (targets, isd) with
+             | [], None -> None
+             | _ ->
+                 Some
+                   {
+                     Repository.sc_dir = Path.dirname fe.Repository.fe_path;
+                     sc_targets = targets;
+                     sc_include_subdirs = isd;
+                   })
+       else None)
+    entries
+  |> List.sort (fun a b -> compare a.Repository.sc_dir b.Repository.sc_dir)
+
 (* Inventory the repository: every readable file with its kind, size,
    content hash and line count, plus the dune scopes found on the way.
    Deterministic: results are sorted by path. *)
@@ -19,75 +93,10 @@ let scan ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root () :
   let module An = (val rt.Reforge_ports.Runtime.analyzer) in
   let an_t = An.create () in
   let* fs_t = Fs.create ~root in
-  let rec walk rel acc =
-    match Fs.list_dir fs_t ~rel with
-    | Error e -> err "cannot list %s: %s" (if rel = "" then "." else rel) e
-    | Ok entries ->
-        let acc, failure =
-          List.fold_left
-            (fun (acc, failure) entry ->
-               let path = if rel = "" then entry else rel ^ "/" ^ entry in
-               if Fs.is_symlink fs_t ~rel:path then (acc, failure)
-               else if Fs.is_dir fs_t ~rel:path then
-                 if List.mem entry config.Config.ignore_dirs
-                    || List.mem path config.Config.ignore_paths
-                    || entry = ".reforge"
-                    || entry = ".git"
-                 then (acc, failure)
-                 else
-                   match walk path acc with
-                   | Ok acc' -> (acc', failure)
-                   | Error e -> (acc, Some e)
-               else (path :: acc, failure))
-            (acc, None) entries
-        in
-        match failure with Some e -> Error e | None -> Ok acc
-  in
-  let* paths = walk "" [] in
-  let paths = List.sort compare paths in
-  let entries =
-    List.filter_map
-      (fun path ->
-         match Fs.read fs_t ~rel:path with
-         | Error _ -> None (* unreadable: skip *)
-         | Ok content ->
-             Some
-               {
-                 Repository.fe_path = Path.normalize path;
-                 fe_kind = Source_file.file_kind_of_path path;
-                 fe_size = String.length content;
-                 fe_hash = Digest.to_hex (Digest.string content);
-                 fe_lines = Util.count_lines content;
-               })
-      paths
-  in
-  let entries =
-    List.sort
-      (fun a b -> compare a.Repository.fe_path b.Repository.fe_path)
-      entries
-  in
-  let scopes =
-    List.filter_map
-      (fun fe ->
-         if fe.Repository.fe_kind = Source_file.Dune_file then
-           match Fs.read fs_t ~rel:fe.Repository.fe_path with
-           | Error _ -> None
-           | Ok content -> (
-               let targets, isd = An.parse_dune an_t ~content in
-               match (targets, isd) with
-               | [], None -> None
-               | _ ->
-                   Some
-                     {
-                       Repository.sc_dir = Path.dirname fe.Repository.fe_path;
-                       sc_targets = targets;
-                       sc_include_subdirs = isd;
-                     })
-         else None)
-      entries
-    |> List.sort (fun a b -> compare a.Repository.sc_dir b.Repository.sc_dir)
-  in
-  Ok { Repository.root = Fs.root fs_t; files = entries; scopes }
+  let* paths = walk_dir (module Fs) fs_t ~config in
+  let files = build_file_entries (module Fs) fs_t paths in
+  let scopes = build_dune_scopes (module Fs) (module An) fs_t an_t files in
+  Ok { Repository.root = Fs.root fs_t; files; scopes }
 
 (* Analyze every OCaml file; identical content is parsed once. *)
 let analyze_all ~(rt : Reforge_ports.Runtime.t) ~(repo : Repository.t) () :
