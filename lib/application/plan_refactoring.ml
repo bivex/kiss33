@@ -391,6 +391,51 @@ let plan_replace_exception_with_result ~(rt : Reforge_ports.Runtime.t) ~(config 
       | Error e -> Error e
       | Ok path -> Ok (plan, path))
 
+let plan_extract_mli ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
+    ~file () : (Change_plan.t * string, string) result =
+  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let store_t = St.create ~root in
+  let id = St.next_plan_id store_t in
+  let command = Printf.sprintf "reforge plan extract-mli %s" file in
+  let* ctx = make_ctx ~rt ~config ~root ~id ~command in
+  match Refactoring.plan_extract_mli ~ctx ~file with
+  | Error e -> Error (Refactoring.pe_message e)
+  | Ok plan -> (
+      match St.save_plan store_t plan with
+      | Error e -> Error e
+      | Ok path -> Ok (plan, path))
+
+let plan_sync_mli ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
+    ~file () : (Change_plan.t * string, string) result =
+  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let store_t = St.create ~root in
+  let id = St.next_plan_id store_t in
+  let command = Printf.sprintf "reforge plan sync-mli %s" file in
+  let* ctx = make_ctx ~rt ~config ~root ~id ~command in
+  match Refactoring.plan_sync_mli ~ctx ~file with
+  | Error e -> Error (Refactoring.pe_message e)
+  | Ok plan -> (
+      match St.save_plan store_t plan with
+      | Error e -> Error e
+      | Ok path -> Ok (plan, path))
+
+let plan_split_module ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
+    ~file ~submodule ~functions () : (Change_plan.t * string, string) result =
+  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let store_t = St.create ~root in
+  let id = St.next_plan_id store_t in
+  let command =
+    Printf.sprintf "reforge plan split-module %s --submodule %s --functions %s"
+      file submodule (String.concat "," functions)
+  in
+  let* ctx = make_ctx ~rt ~config ~root ~id ~command in
+  match Refactoring.plan_split_module ~ctx ~file ~submodule ~functions with
+  | Error e -> Error (Refactoring.pe_message e)
+  | Ok plan -> (
+      match St.save_plan store_t plan with
+      | Error e -> Error e
+      | Ok path -> Ok (plan, path))
+
 (* All plans with their derived status. *)
 let list_status ~(rt : Reforge_ports.Runtime.t) ~root () :
     ((Change_plan.t * Change_plan.status) list, string) result =

@@ -14,6 +14,7 @@ let run ~(rt : Reforge_ports.Runtime.t) ~root ~plan_id () :
   let module St = (val rt.Reforge_ports.Runtime.store) in
   let store_t = St.create ~root in
   let* applied = St.load_applied store_t ~plan_id in
+  let* plan = St.load_plan store_t plan_id in
   if applied.Change_plan.ap_undone_at <> None then
     Error (Printf.sprintf "plan %s was already undone" plan_id)
   else begin
@@ -33,19 +34,25 @@ let run ~(rt : Reforge_ports.Runtime.t) ~root ~plan_id () :
              match Fs.file_stat fs_t ~rel:dst with
              | Ok (_, h) when h = hash -> None
              | Ok (_, h) ->
-                 Some (Printf.sprintf "%s changed after apply (%s <> %s)" dst h hash)
+               Some (Printf.sprintf "%s changed after apply (%s <> %s)" dst h hash)
              | Error _ -> Some (Printf.sprintf "%s no longer exists" dst))
           applied.Change_plan.ap_moved
       @ List.filter_map
           (fun path ->
+             let expected_hash =
+               List.find_map
+                 (function
+                    | Change_plan.Op_write_file { path = p; hash; _ } when p = path -> Some hash
+                    | _ -> None)
+                 plan.Change_plan.cp_ops
+             in
              match Fs.file_stat fs_t ~rel:path with
-             | Ok _ ->
-                 Some
-                   (Printf.sprintf
-                      "%s changed after apply (was created by the plan and has been \
-                       modified since)"
-                      path)
-             | Error _ -> None)
+             | Ok (_, h) -> (
+                 match expected_hash with
+                 | Some exp when exp <> h ->
+                     Some (Printf.sprintf "%s changed after apply (%s <> %s)" path h exp)
+                 | _ -> None)
+             | Error _ -> Some (Printf.sprintf "%s no longer exists" path))
           applied.Change_plan.ap_written
     in
     if diverged <> [] then

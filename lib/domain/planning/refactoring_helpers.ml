@@ -295,3 +295,110 @@ let make_edit ?(start_line = 1) ?(end_line = 1) ~start_off ~end_off ~replacement
     e_replacement = replacement;
     e_reason = reason;
   }
+
+let val_spec_of_value_def ~content (vd : Source_file.value_def) : string =
+  let content_len = String.length content in
+  let name = vd.Source_file.vd_name in
+  let name_end = vd.Source_file.vd_loc.Source_file.end_off in
+  let limit =
+    match vd.Source_file.vd_body_loc with
+    | Some b -> min content_len b.Source_file.start_off
+    | None -> content_len
+  in
+  let rec find_eq i =
+    if i >= limit then limit
+    else if content.[i] = '=' && (i + 1 >= content_len || content.[i + 1] <> '=') then i
+    else find_eq (i + 1)
+  in
+  let eq_pos = find_eq name_end in
+  let header =
+    if eq_pos > name_end then String.trim (String.sub content name_end (eq_pos - name_end))
+    else ""
+  in
+  if String.length header > 0 && header.[0] = ':' then
+    let ty = String.trim (String.sub header 1 (String.length header - 1)) in
+    Printf.sprintf "val %s : %s" name ty
+  else
+    let params = vd.Source_file.vd_params in
+    if params <> [] then
+      let param_types =
+        List.mapi
+          (fun idx (p : Source_file.fn_param) ->
+             let s = p.Source_file.fp_full_loc.Source_file.start_off in
+             let e = min content_len p.Source_file.fp_full_loc.Source_file.end_off in
+             let p_text = if e > s && s < content_len then String.trim (String.sub content s (e - s)) else "" in
+             let colon_idx =
+               try Some (String.index p_text ':') with Not_found -> None
+             in
+             let ty_str =
+               match colon_idx with
+               | Some c_idx ->
+                   let after = String.sub p_text (c_idx + 1) (String.length p_text - c_idx - 1) in
+                   let raw_ty = String.trim after in
+                   let len = String.length raw_ty in
+                   if len > 0 && raw_ty.[len - 1] = ')' then
+                     String.trim (String.sub raw_ty 0 (len - 1))
+                   else raw_ty
+               | None -> Printf.sprintf "'t%d" (idx + 1)
+             in
+             match p.Source_file.fp_kind with
+             | Source_file.Positional -> ty_str
+             | Source_file.Labelled l -> Printf.sprintf "%s:%s" l ty_str
+             | Source_file.Optional l -> Printf.sprintf "?%s:%s" l ty_str)
+          params
+      in
+      let last_param = List.nth params (List.length params - 1) in
+      let last_p_end = min limit last_param.Source_file.fp_full_loc.Source_file.end_off in
+      let after_params =
+        if eq_pos > last_p_end then String.trim (String.sub content last_p_end (eq_pos - last_p_end))
+        else ""
+      in
+      let ret_ty =
+        if String.length after_params > 0 && after_params.[0] = ':' then
+          String.trim (String.sub after_params 1 (String.length after_params - 1))
+        else
+          Printf.sprintf "'res"
+      in
+      Printf.sprintf "val %s : %s" name (String.concat " -> " (param_types @ [ ret_ty ]))
+    else
+      let ty =
+        if String.length header > 0 && header.[0] = ':' then
+          String.trim (String.sub header 1 (String.length header - 1))
+        else "'a"
+      in
+      Printf.sprintf "val %s : %s" name ty
+
+let extract_type_decl ~content (td : Source_file.type_def) : string option =
+  let content_len = String.length content in
+  let start = td.Source_file.td_loc.Source_file.start_off in
+  let rec find_type_kw i =
+    if i < 0 then 0
+    else if i + 5 <= content_len && String.sub content i 5 = "type "
+            && (i = 0 || content.[i - 1] = '\n' || content.[i - 1] = ' ' || content.[i - 1] = '\t') then
+      i
+    else if i + 4 <= content_len && String.sub content i 4 = "and "
+            && (i = 0 || content.[i - 1] = '\n' || content.[i - 1] = ' ' || content.[i - 1] = '\t') then
+      i
+    else find_type_kw (i - 1)
+  in
+  let kw_start = find_type_kw start in
+  let name_end = td.Source_file.td_loc.Source_file.end_off in
+  let rec find_end i =
+    if i >= content_len then content_len
+    else if i + 2 <= content_len && String.sub content i 2 = "\n\n" then i
+    else if content.[i] = '\n' then
+      let rest = String.sub content i (min 12 (content_len - i)) in
+      if String.starts_with ~prefix:"\nlet " rest
+         || String.starts_with ~prefix:"\ntype " rest
+         || String.starts_with ~prefix:"\nmodule " rest
+         || String.starts_with ~prefix:"\nopen " rest
+         || String.starts_with ~prefix:"\nexception " rest then
+        i
+      else find_end (i + 1)
+    else find_end (i + 1)
+  in
+  let decl_end = find_end name_end in
+  if decl_end > kw_start then
+    Some (String.trim (String.sub content kw_start (decl_end - kw_start)))
+  else None
+

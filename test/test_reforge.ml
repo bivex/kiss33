@@ -2078,6 +2078,128 @@ let test_e2e_replace_exception_with_result () =
                 let restored = In_channel.with_open_bin (Filename.concat root "lib/safe.ml") In_channel.input_all in
                 Alcotest.(check bool) "safe.ml restored" true (str_contains restored "failwith")))
 
+let test_e2e_extract_mli () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/math.ml" "type number = Int of int | Float of float\n\nlet add (x : int) (y : int) : int = x + y\n\nlet internal_helper x = x * 2\n";
+  write "bin/main.ml" "let () = print_int (Sample_lib.Math.add 1 2)\n";
+
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_extract_mli ~rt:runtime ~config ~root
+      ~file:"lib/math.ml" ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_extract_mli failed: " ^ e)
+  | Ok (plan, _path) ->
+      Alcotest.(check int) "1 file written" 1 (List.length plan.cp_ops);
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       | Ok applied ->
+           Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
+           let mli_path = Filename.concat root "lib/math.mli" in
+           Alcotest.(check bool) "math.mli exists" true (Sys.file_exists mli_path);
+           let mli_c = In_channel.with_open_bin mli_path In_channel.input_all in
+           Alcotest.(check bool) "type number exported" true (str_contains mli_c "type number");
+           Alcotest.(check bool) "val add exported" true (str_contains mli_c "val add : int -> int -> int");
+           Alcotest.(check bool) "internal_helper hidden" false (str_contains mli_c "internal_helper");
+           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+            | Error e -> Alcotest.fail ("validate failed: " ^ e)
+            | Ok checks ->
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+            | Error e -> Alcotest.fail ("undo failed: " ^ e)
+            | Ok _ ->
+                Alcotest.(check bool) "math.mli removed on undo" false (Sys.file_exists mli_path)))
+
+let test_e2e_sync_mli () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/service.ml" "let keep x = x\nlet added_fn (y : int) : int = y + 1\n";
+  write "lib/service.mli" "val keep : 'a -> 'a\nval removed_fn : int -> int\n";
+
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_sync_mli ~rt:runtime ~config ~root
+      ~file:"lib/service.ml" ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_sync_mli failed: " ^ e)
+  | Ok (plan, _path) ->
+      Alcotest.(check int) "1 file edited" 1 (List.length plan.cp_ops);
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       | Ok applied ->
+           Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
+           let mli_c = In_channel.with_open_bin (Filename.concat root "lib/service.mli") In_channel.input_all in
+           Alcotest.(check bool) "val keep preserved" true (str_contains mli_c "val keep");
+           Alcotest.(check bool) "removed_fn deleted" false (str_contains mli_c "removed_fn");
+           Alcotest.(check bool) "added_fn added" true (str_contains mli_c "val added_fn : int -> int");
+           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+            | Error e -> Alcotest.fail ("validate failed: " ^ e)
+            | Ok checks ->
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+            | Error e -> Alcotest.fail ("undo failed: " ^ e)
+            | Ok _ ->
+                let restored = In_channel.with_open_bin (Filename.concat root "lib/service.mli") In_channel.input_all in
+                Alcotest.(check bool) "removed_fn restored" true (str_contains restored "removed_fn")))
+
+let test_e2e_split_module () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/api.ml" "let fetch_data url = \"data\"\nlet parse_data raw = 42\nlet render view = \"html\"\n";
+
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_split_module ~rt:runtime ~config ~root
+      ~file:"lib/api.ml" ~submodule:"Fetcher" ~functions:[ "fetch_data"; "parse_data" ] ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_split_module failed: " ^ e)
+  | Ok (plan, _path) ->
+      Alcotest.(check int) "1 file edited" 1 (List.length plan.cp_ops);
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       | Ok applied ->
+           Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
+           let api_c = In_channel.with_open_bin (Filename.concat root "lib/api.ml") In_channel.input_all in
+           Alcotest.(check bool) "Fetcher submodule created" true (str_contains api_c "module Fetcher = struct");
+           Alcotest.(check bool) "fetch_data inside submodule" true (str_contains api_c "  let fetch_data url = \"data\"");
+           Alcotest.(check bool) "fetch_data alias present" true (str_contains api_c "let fetch_data = Fetcher.fetch_data");
+           Alcotest.(check bool) "parse_data alias present" true (str_contains api_c "let parse_data = Fetcher.parse_data");
+           Alcotest.(check bool) "render function preserved" true (str_contains api_c "let render view = \"html\"");
+           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+            | Error e -> Alcotest.fail ("validate failed: " ^ e)
+            | Ok checks ->
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+            | Error e -> Alcotest.fail ("undo failed: " ^ e)
+            | Ok _ ->
+                let restored = In_channel.with_open_bin (Filename.concat root "lib/api.ml") In_channel.input_all in
+                Alcotest.(check bool) "api.ml restored" false (str_contains restored "module Fetcher")))
+
 (* ------------------------------------------------------------------ *)
 (* Test runner                                                        *)
 (* ------------------------------------------------------------------ *)
@@ -2146,7 +2268,11 @@ let () =
           Alcotest.test_case "e2e qualify-open" `Quick test_e2e_qualify_open;
           Alcotest.test_case "e2e wrap-primitive" `Quick test_e2e_wrap_primitive;
           Alcotest.test_case "e2e replace-exception-with-result" `Quick test_e2e_replace_exception_with_result;
+          Alcotest.test_case "e2e extract-mli" `Quick test_e2e_extract_mli;
+          Alcotest.test_case "e2e sync-mli" `Quick test_e2e_sync_mli;
+          Alcotest.test_case "e2e split-module" `Quick test_e2e_split_module;
           Alcotest.test_case "stale plan rejection" `Quick test_stale_plan_rejection;
         ] );
     ]
+
 

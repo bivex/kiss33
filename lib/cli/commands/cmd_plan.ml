@@ -325,5 +325,49 @@ let run_plan_replace_exception_with_result ~rt ~json root file fn_name =
   | Ok (plan, path) ->
       emit_plan_created ~command:"plan replace-exception-with-result" ~json plan path
 
+let run_plan_extract_mli ~rt ~json root file =
+  if file = "" then begin
+    let msg = "missing required argument: FILE" in
+    if json then (emit_error_json ~command:"plan extract-mli" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_extract_mli ~rt ~config ~root ~file () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan extract-mli" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan extract-mli" ~json plan path
+
+let run_plan_sync_mli ~rt ~json root file =
+  if file = "" then begin
+    let msg = "missing required argument: FILE" in
+    if json then (emit_error_json ~command:"plan sync-mli" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_sync_mli ~rt ~config ~root ~file () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan sync-mli" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan sync-mli" ~json plan path
+
+let run_plan_split_module ~rt ~json root file submodule functions =
+  if file = "" || submodule = "" || functions = "" then begin
+    let msg = "missing required arguments: FILE --submodule <NAME> --functions <FN1,FN2>" in
+    if json then (emit_error_json ~command:"plan split-module" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let fn_list = List.filter (( <> ) "") (List.map String.trim (String.split_on_char ',' functions)) in
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_split_module ~rt ~config ~root ~file ~submodule ~functions:fn_list () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan split-module" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan split-module" ~json plan path
+
+
 
 

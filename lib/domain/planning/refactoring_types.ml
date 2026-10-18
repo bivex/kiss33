@@ -59,6 +59,17 @@ type intent =
       file : string;
       fn_name : string;
     }
+  | Extract_mli of {
+      file : string;
+    }
+  | Sync_mli of {
+      file : string;
+    }
+  | Split_module of {
+      file : string;
+      submodule : string;
+      functions : string list;
+    }
 
 type plan_error =
   | Src_not_found of string
@@ -117,6 +128,10 @@ type plan_error =
   | Fn_in_use of string * string
   | Mutually_recursive_binding of string * string
   | No_exception_to_replace of string * string
+  | Mli_already_exists of string
+  | Mli_not_found of string
+  | No_functions_to_split of string
+  | Invalid_file_type of string
 
 let pe_message = function
   | Src_not_found p -> Printf.sprintf "source not found in repository: %s" p
@@ -241,6 +256,14 @@ let pe_message = function
       Printf.sprintf "cannot remove function '%s' (%s): it is part of a mutually recursive let binding" fn f
   | No_exception_to_replace (f, fn) ->
       Printf.sprintf "no exception-raising expressions found in function '%s' of %s" fn f
+  | Mli_already_exists p ->
+      Printf.sprintf "interface file already exists: %s (use sync-mli to update it)" p
+  | Mli_not_found p ->
+      Printf.sprintf "interface file not found: %s (use extract-mli to create it)" p
+  | No_functions_to_split f ->
+      Printf.sprintf "no functions specified to extract into submodule in %s" f
+  | Invalid_file_type f ->
+      Printf.sprintf "file %s is not an OCaml implementation file (.ml)" f
 
 type ctx = {
   repo : Repository.t;

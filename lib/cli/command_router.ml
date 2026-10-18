@@ -237,6 +237,29 @@ let run ~rt ~argv () : int =
        and+ fn = Arg.(value & pos 1 string "" & info [] ~docv:"FN" ~doc:"Function name to refactor.") in
        run_plan_replace_exception_with_result ~rt ~json:j r file fn)
   in
+  let plan_extract_mli_cmd =
+    mk "extract-mli" "Plan extracting a minimal companion .mli interface based on public references."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"OCaml source file (.ml) to extract interface for.") in
+       run_plan_extract_mli ~rt ~json:j r file)
+  in
+  let plan_sync_mli_cmd =
+    mk "sync-mli" "Plan synchronizing companion .mli interface with .ml implementation."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"OCaml source file (.ml) whose interface to synchronize.") in
+       run_plan_sync_mli ~rt ~json:j r file)
+  in
+  let plan_split_module_cmd =
+    mk "split-module" "Plan splitting functions from a file into a submodule while preserving entry points."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"OCaml source file to split.")
+       and+ submodule = Arg.(value & opt string "" & info [ "submodule" ] ~docv:"NAME" ~doc:"Name of the submodule to create.")
+       and+ functions = Arg.(value & opt string "" & info [ "functions" ] ~docv:"FNS" ~doc:"Comma-separated function names to extract.") in
+       run_plan_split_module ~rt ~json:j r file submodule functions)
+  in
   let plan_cmd =
     Cmd.group (Cmd.info "plan" ~doc:"Create change plans.")
       [
@@ -262,6 +285,9 @@ let run ~rt ~argv () : int =
         plan_qualify_open_cmd;
         plan_wrap_primitive_cmd;
         plan_replace_exception_with_result_cmd;
+        plan_extract_mli_cmd;
+        plan_sync_mli_cmd;
+        plan_split_module_cmd;
       ]
   in
   let preview_cmd =

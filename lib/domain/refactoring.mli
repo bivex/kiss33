@@ -59,6 +59,17 @@ type intent =
       file : string;
       fn_name : string;
     }
+  | Extract_mli of {
+      file : string;
+    }
+  | Sync_mli of {
+      file : string;
+    }
+  | Split_module of {
+      file : string;
+      submodule : string;
+      functions : string list;
+    }
 
 type plan_error =
   | Src_not_found of string
@@ -117,6 +128,10 @@ type plan_error =
   | Fn_in_use of string * string
   | Mutually_recursive_binding of string * string
   | No_exception_to_replace of string * string
+  | Mli_already_exists of string
+  | Mli_not_found of string
+  | No_functions_to_split of string
+  | Invalid_file_type of string
 
 val pe_message : plan_error -> string
 
@@ -323,3 +338,25 @@ val plan_replace_exception_with_result :
   fn_name:string ->
   (Change_plan.t, plan_error) result
 (** Replace exception-raising constructs in a function with Result-returning Ok/Error values. *)
+
+val plan_extract_mli :
+  ctx:ctx ->
+  file:string ->
+  (Change_plan.t, plan_error) result
+(** Automatically generate a minimal companion .mli interface based on public references
+    across the repository. *)
+
+val plan_sync_mli :
+  ctx:ctx ->
+  file:string ->
+  (Change_plan.t, plan_error) result
+(** Synchronize companion .mli with .ml: remove obsolete val specs and add missing ones. *)
+
+val plan_split_module :
+  ctx:ctx ->
+  file:string ->
+  submodule:string ->
+  functions:string list ->
+  (Change_plan.t, plan_error) result
+(** Decompose a file into a submodule while preserving top-level entry points for backward compatibility. *)
+

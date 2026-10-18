@@ -21,3 +21,6 @@ include Plan_remove_unused_fn
 include Plan_qualify_open
 include Plan_wrap_primitive
 include Plan_replace_exception_with_result
+include Plan_extract_mli
+include Plan_sync_mli
+include Plan_split_module
