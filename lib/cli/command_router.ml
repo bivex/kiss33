@@ -195,6 +195,23 @@ let run ~rt ~argv () : int =
        and+ new_name = Arg.(value & pos 1 string "" & info [] ~docv:"NEW_MODULE" ~doc:"New module name or file path.") in
        run_plan_rename_module ~rt ~json:j r file old_name new_name)
   in
+  let plan_reorder_args_cmd =
+    mk "reorder-args" "Plan reordering arguments of a function across the repository."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"File containing the function definition.")
+       and+ fn = Arg.(value & pos 1 string "" & info [] ~docv:"FN" ~doc:"Function name whose arguments to reorder.")
+       and+ order = Arg.(value & pos 2 string "" & info [] ~docv:"NEW_ORDER" ~doc:"New parameter order (comma-separated, e.g. 'b,a').") in
+       run_plan_reorder_args ~rt ~json:j r file fn order)
+  in
+  let plan_remove_unused_fn_cmd =
+    mk "remove-unused-fn" "Plan removing an unused non-exported function."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"File containing the unused function.")
+       and+ fn = Arg.(value & pos 1 string "" & info [] ~docv:"FN" ~doc:"Unused function name to remove.") in
+       run_plan_remove_unused_fn ~rt ~json:j r file fn)
+  in
   let plan_cmd =
     Cmd.group (Cmd.info "plan" ~doc:"Create change plans.")
       [
@@ -215,6 +232,8 @@ let run ~rt ~argv () : int =
         plan_rename_field_cmd;
         plan_rename_constructor_cmd;
         plan_rename_module_cmd;
+        plan_reorder_args_cmd;
+        plan_remove_unused_fn_cmd;
       ]
   in
   let preview_cmd =

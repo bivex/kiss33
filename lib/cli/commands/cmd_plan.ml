@@ -249,4 +249,38 @@ let run_plan_rename_module ~rt ~json root file old_name new_name =
   | Ok (plan, path) ->
       emit_plan_created ~command:"plan rename-module" ~json plan path
 
+let run_plan_reorder_args ~rt ~json root file fn_name raw_order =
+  let new_order =
+    String.map (fun c -> if c = ',' then ' ' else c) raw_order
+    |> String.split_on_char ' '
+    |> List.map String.trim
+    |> List.filter (fun s -> s <> "")
+  in
+  if file = "" || fn_name = "" || new_order = [] then begin
+    let msg = "missing required arguments: FILE FN NEW_ORDER" in
+    if json then (emit_error_json ~command:"plan reorder-args" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_reorder_args ~rt ~config ~root ~file ~fn_name ~new_order () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan reorder-args" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan reorder-args" ~json plan path
+
+let run_plan_remove_unused_fn ~rt ~json root file fn_name =
+  if file = "" || fn_name = "" then begin
+    let msg = "missing required arguments: FILE FN" in
+    if json then (emit_error_json ~command:"plan remove-unused-fn" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_remove_unused_fn ~rt ~config ~root ~file ~fn_name () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan remove-unused-fn" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan remove-unused-fn" ~json plan path
+
 

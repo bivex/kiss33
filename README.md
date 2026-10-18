@@ -138,6 +138,8 @@ reforge [COMMAND] [OPTIONS]
 | `reforge plan rename-field <FILE> <TYPE> <OLD_FIELD> <NEW_FIELD>` | Plan renaming a record field in declarations, literals (including punned), field projections, and patterns. |
 | `reforge plan rename-constructor <FILE> <TYPE> <OLD_CTOR> <NEW_CTOR>` | Plan renaming a variant constructor in declarations, pattern matches, and expressions repo-wide. |
 | `reforge plan rename-module <SRC_MODULE> <NEW_MODULE> [--file=FILE]` | Plan renaming a file-level module (with file moves, dune updates, and reference rewrites) or an inner submodule. |
+| `reforge plan reorder-args <FILE> <FN> <NEW_ORDER>` | Plan reordering parameters of a function in definition, companion `.mli`, and call sites repo-wide. |
+| `reforge plan remove-unused-fn <FILE> <FN>` | Plan removing an unused private function with no callers in the repository. |
 | `reforge preview [PLAN]` | Show byte-precise unified diffs and operations of a plan (defaults to latest). |
 | `reforge diff [--plan=PLAN]` | Show unified diffs for a plan or applied changes. |
 | `reforge apply [PLAN]` | Execute the plan transactionally with automatic backups. |
@@ -492,6 +494,45 @@ created .reforge/plans/plan-0016.json
 
 # Or rename an inner submodule within a specific file
 $ reforge plan rename-module --file lib/math.ml Algebra LinearAlgebra
+```
+
+### 18. Reorder Function Arguments
+
+Reorder function parameters to place the pipeline target last (`|>`) or improve calling ergonomics:
+
+```bash
+$ reforge plan reorder-args lib/util.ml subtract y,x
+created .reforge/plans/plan-0017.json
+  reorder arguments of subtract in lib/util.ml to [y, x] (3 files edited)
+  operations:
+    edit  lib/util.ml (2 edits)
+    edit  lib/util.mli (1 edits)
+    edit  bin/main.ml (1 edits)
+
+$ reforge preview
+# lib/util.ml:
+# - let subtract x y = x - y
+# + let subtract y x = x - y
+# bin/main.ml:
+# - Sample_lib.Util.subtract 10 3
+# + Sample_lib.Util.subtract 3 10
+
+$ reforge apply
+```
+
+### 19. Remove Unused Private Function
+
+Prune dead functions that are not exported in `.mli` and have no callers across the repository:
+
+```bash
+$ reforge plan remove-unused-fn lib/util.ml dead_helper
+created .reforge/plans/plan-0018.json
+  remove unused function dead_helper from lib/util.ml (1 file edited)
+  operations:
+    edit  lib/util.ml (1 edits)
+
+$ reforge apply
+$ reforge validate
 ```
 
 ---

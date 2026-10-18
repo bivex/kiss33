@@ -37,6 +37,15 @@ type intent =
       old_name : string;
       new_name : string;
     }
+  | Reorder_args of {
+      file : string;
+      fn_name : string;
+      new_order : string list;
+    }
+  | Remove_unused_fn of {
+      file : string;
+      fn_name : string;
+    }
 
 type plan_error =
   | Src_not_found of string
@@ -88,6 +97,12 @@ type plan_error =
   | Module_collision of string * string
   | Invalid_module_name of string
   | Ambiguous_module of string * string list
+  | Reorder_count_mismatch of string * string * int * int
+  | Reorder_fewer_than_two_args of string * string
+  | Partial_application_call of string * string
+  | Fn_is_exported of string * string
+  | Fn_in_use of string * string
+  | Mutually_recursive_binding of string * string
 
 let pe_message = function
   | Src_not_found p -> Printf.sprintf "source not found in repository: %s" p
@@ -195,6 +210,21 @@ let pe_message = function
       Printf.sprintf
         "module '%s' is declared in multiple files (%s); use --file to specify which one to refactor"
         m (String.concat ", " files)
+  | Reorder_count_mismatch (f, fn, got, exp) ->
+      Printf.sprintf "argument count mismatch for function %s (%s): got %d, expected %d" fn f got exp
+  | Reorder_fewer_than_two_args (f, fn) ->
+      Printf.sprintf "function '%s' in %s has fewer than 2 arguments; cannot reorder" fn f
+  | Partial_application_call (fn, caller) ->
+      Printf.sprintf
+        "cannot reorder arguments of %s: a call site in %s supplies fewer arguments than needed (partial application)"
+        fn caller
+  | Fn_is_exported (f, fn) ->
+      Printf.sprintf "cannot remove function '%s' (%s): it is exported in %s" fn f
+        (Filename.remove_extension f ^ ".mli")
+  | Fn_in_use (fn, user_file) ->
+      Printf.sprintf "cannot remove function '%s': it is referenced in %s" fn user_file
+  | Mutually_recursive_binding (f, fn) ->
+      Printf.sprintf "cannot remove function '%s' (%s): it is part of a mutually recursive let binding" fn f
 
 type ctx = {
   repo : Repository.t;

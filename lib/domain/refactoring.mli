@@ -37,6 +37,15 @@ type intent =
       old_name : string;
       new_name : string;
     }
+  | Reorder_args of {
+      file : string;
+      fn_name : string;
+      new_order : string list;
+    }
+  | Remove_unused_fn of {
+      file : string;
+      fn_name : string;
+    }
 
 type plan_error =
   | Src_not_found of string
@@ -88,6 +97,12 @@ type plan_error =
   | Module_collision of string * string
   | Invalid_module_name of string
   | Ambiguous_module of string * string list
+  | Reorder_count_mismatch of string * string * int * int
+  | Reorder_fewer_than_two_args of string * string
+  | Partial_application_call of string * string
+  | Fn_is_exported of string * string
+  | Fn_in_use of string * string
+  | Mutually_recursive_binding of string * string
 
 val pe_message : plan_error -> string
 
@@ -254,3 +269,20 @@ val plan_rename_module :
   (Change_plan.t, plan_error) result
 (** Rename a module: either a file-level module (moving files, updating dune and
     rewriting references) or an inner submodule within a file. *)
+
+val plan_reorder_args :
+  ctx:ctx ->
+  file:string ->
+  fn_name:string ->
+  new_order:string list ->
+  (Change_plan.t, plan_error) result
+(** Reorder parameters of a function across definition (.ml), companion interface (.mli),
+    and call sites across the repository. *)
+
+val plan_remove_unused_fn :
+  ctx:ctx ->
+  file:string ->
+  fn_name:string ->
+  (Change_plan.t, plan_error) result
+(** Remove an unused private function that is not exported in .mli and has no call sites
+    or references in the repository. *)

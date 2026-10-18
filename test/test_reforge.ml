@@ -1771,6 +1771,192 @@ let test_rename_module_errors () =
    | Error msg -> Alcotest.(check bool) "error invalid mod name" true (String.starts_with ~prefix:"invalid OCaml module identifier" msg)
    | Ok _ -> Alcotest.fail "expected error for lowercase module name")
 
+let test_e2e_reorder_args () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/util.ml"
+    "let subtract x y = x - y\n\
+     let calc a b = subtract a b\n";
+  write "lib/util.mli"
+    "val subtract : int -> int -> int\n\
+     val calc : int -> int -> int\n";
+  write "bin/main.ml"
+    "let test () = Sample_lib.Util.subtract 10 3\n";
+
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
+      ~file:"lib/util.ml" ~fn_name:"subtract" ~new_order:[ "y"; "x" ] ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_reorder_args failed: " ^ e)
+  | Ok (plan, _path) ->
+      Alcotest.(check int) "3 files touched" 3 (List.length plan.cp_ops);
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       | Ok applied ->
+           Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
+           let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+           let mli_c = In_channel.with_open_bin (Filename.concat root "lib/util.mli") In_channel.input_all in
+           let main_c = In_channel.with_open_bin (Filename.concat root "bin/main.ml") In_channel.input_all in
+           Alcotest.(check bool) "header updated in util.ml" true (str_contains util_c "let subtract y x = x - y");
+           Alcotest.(check bool) "call updated in util.ml" true (str_contains util_c "subtract b a");
+           Alcotest.(check bool) "mli updated" true (str_contains mli_c "val subtract : int -> int -> int");
+           Alcotest.(check bool) "main call updated" true (str_contains main_c "Sample_lib.Util.subtract 3 10");
+           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+            | Error e -> Alcotest.fail ("validate failed: " ^ e)
+            | Ok checks ->
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+            | Error e -> Alcotest.fail ("undo failed: " ^ e)
+            | Ok _ ->
+                let restored_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+                let restored_main = In_channel.with_open_bin (Filename.concat root "bin/main.ml") In_channel.input_all in
+                Alcotest.(check bool) "util.ml restored" true (str_contains restored_util "let subtract x y = x - y");
+                Alcotest.(check bool) "main.ml restored" true (str_contains restored_main "Sample_lib.Util.subtract 10 3")))
+
+let test_reorder_args_errors () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/util.ml"
+    "let single x = x\n\
+     let pair a b = a + b\n\
+     let partial () = pair 1\n";
+
+  (* Function not found *)
+  (match Reforge_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"no_such" ~new_order:[ "a"; "b" ] () with
+   | Error msg -> Alcotest.(check bool) "error fn not found" true (String.starts_with ~prefix:"function 'no_such' not found" msg)
+   | Ok _ -> Alcotest.fail "expected error for unknown function");
+
+  (* Fewer than 2 arguments *)
+  (match Reforge_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"single" ~new_order:[ "x" ] () with
+   | Error msg -> Alcotest.(check bool) "error fewer than 2" true (str_contains msg "has fewer than 2 arguments")
+   | Ok _ -> Alcotest.fail "expected error for fewer than 2 arguments");
+
+  (* Argument count mismatch *)
+  (match Reforge_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"pair" ~new_order:[ "a"; "b"; "c" ] () with
+   | Error msg -> Alcotest.(check bool) "error count mismatch" true (str_contains msg "argument count mismatch")
+   | Ok _ -> Alcotest.fail "expected error for count mismatch");
+
+  (* Unknown argument name *)
+  (match Reforge_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"pair" ~new_order:[ "z"; "a" ] () with
+   | Error msg -> Alcotest.(check bool) "error arg not found" true (str_contains msg "argument 'z' not found")
+   | Ok _ -> Alcotest.fail "expected error for unknown arg");
+
+  (* Duplicate argument name *)
+  (match Reforge_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"pair" ~new_order:[ "a"; "a" ] () with
+   | Error msg -> Alcotest.(check bool) "error collision" true (str_contains msg "already exists")
+   | Ok _ -> Alcotest.fail "expected error for duplicate arg");
+
+  (* Same order *)
+  (match Reforge_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"pair" ~new_order:[ "a"; "b" ] () with
+   | Error msg -> Alcotest.(check bool) "error same order" true (str_contains msg "source and destination are the same")
+   | Ok _ -> Alcotest.fail "expected error for same order");
+
+  (* Partial application at call site *)
+  (match Reforge_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"pair" ~new_order:[ "b"; "a" ] () with
+   | Error msg -> Alcotest.(check bool) "error partial call" true (str_contains msg "partial application")
+   | Ok _ -> Alcotest.fail "expected error for partial call site")
+
+let test_e2e_remove_unused_fn () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/util.ml"
+    "let unused_helper a b = a * 2 + b\n\
+     let alive_fn x = x + 1\n";
+  write "lib/util.mli"
+    "val alive_fn : int -> int\n";
+
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_remove_unused_fn ~rt:runtime ~config ~root
+      ~file:"lib/util.ml" ~fn_name:"unused_helper" ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_remove_unused_fn failed: " ^ e)
+  | Ok (plan, _path) ->
+      Alcotest.(check int) "1 file touched" 1 (List.length plan.cp_ops);
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       | Ok applied ->
+           Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
+           let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+           Alcotest.(check bool) "unused_helper removed" false (str_contains util_c "unused_helper");
+           Alcotest.(check bool) "alive_fn preserved" true (str_contains util_c "let alive_fn x = x + 1");
+           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+            | Error e -> Alcotest.fail ("validate failed: " ^ e)
+            | Ok checks ->
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+            | Error e -> Alcotest.fail ("undo failed: " ^ e)
+            | Ok _ ->
+                let restored_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+                Alcotest.(check bool) "unused_helper restored" true (str_contains restored_util "unused_helper")))
+
+let test_remove_unused_fn_errors () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/util.ml"
+    "let helper x = x + 1\n\
+     let alive x = helper x\n";
+  write "lib/util.mli"
+    "val alive : int -> int\n";
+  write "bin/main.ml"
+    "let test () = Sample_lib.Util.alive 10\n";
+
+  (* Exported in .mli *)
+  (match Reforge_app.Plan_refactoring.plan_remove_unused_fn ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"alive" () with
+   | Error msg -> Alcotest.(check bool) "error exported in mli" true (str_contains msg "it is exported in lib/util.mli")
+   | Ok _ -> Alcotest.fail "expected error for exported function");
+
+  (* Used internally in lib/util.ml *)
+  (match Reforge_app.Plan_refactoring.plan_remove_unused_fn ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"helper" () with
+   | Error msg -> Alcotest.(check bool) "error used internally" true (str_contains msg "it is referenced in lib/util.ml")
+   | Ok _ -> Alcotest.fail "expected error for internally used function");
+
+  (* Unknown function *)
+  (match Reforge_app.Plan_refactoring.plan_remove_unused_fn ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"nonexistent" () with
+   | Error msg -> Alcotest.(check bool) "error not found" true (str_contains msg "function 'nonexistent' not found")
+   | Ok _ -> Alcotest.fail "expected error for unknown function")
+
 (* ------------------------------------------------------------------ *)
 (* Test runner                                                        *)
 (* ------------------------------------------------------------------ *)
@@ -1832,6 +2018,10 @@ let () =
           Alcotest.test_case "e2e rename-module file" `Quick test_e2e_rename_module_file;
           Alcotest.test_case "e2e rename-module submodule" `Quick test_e2e_rename_module_submodule;
           Alcotest.test_case "rename-module errors" `Quick test_rename_module_errors;
+          Alcotest.test_case "e2e reorder-args" `Quick test_e2e_reorder_args;
+          Alcotest.test_case "reorder-args errors" `Quick test_reorder_args_errors;
+          Alcotest.test_case "e2e remove-unused-fn" `Quick test_e2e_remove_unused_fn;
+          Alcotest.test_case "remove-unused-fn errors" `Quick test_remove_unused_fn_errors;
           Alcotest.test_case "stale plan rejection" `Quick test_stale_plan_rejection;
         ] );
     ]

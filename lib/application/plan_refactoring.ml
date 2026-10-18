@@ -319,6 +319,36 @@ let plan_rename_module ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~roo
       | Error e -> Error e
       | Ok path -> Ok (plan, path))
 
+let plan_reorder_args ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
+    ~file ~fn_name ~new_order () : (Change_plan.t * string, string) result =
+  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let store_t = St.create ~root in
+  let id = St.next_plan_id store_t in
+  let command =
+    Printf.sprintf "reforge plan reorder-args %s %s %s" file fn_name (String.concat "," new_order)
+  in
+  let* ctx = make_ctx ~rt ~config ~root ~id ~command in
+  match Refactoring.plan_reorder_args ~ctx ~file ~fn_name ~new_order with
+  | Error e -> Error (Refactoring.pe_message e)
+  | Ok plan -> (
+      match St.save_plan store_t plan with
+      | Error e -> Error e
+      | Ok path -> Ok (plan, path))
+
+let plan_remove_unused_fn ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
+    ~file ~fn_name () : (Change_plan.t * string, string) result =
+  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let store_t = St.create ~root in
+  let id = St.next_plan_id store_t in
+  let command = Printf.sprintf "reforge plan remove-unused-fn %s %s" file fn_name in
+  let* ctx = make_ctx ~rt ~config ~root ~id ~command in
+  match Refactoring.plan_remove_unused_fn ~ctx ~file ~fn_name with
+  | Error e -> Error (Refactoring.pe_message e)
+  | Ok plan -> (
+      match St.save_plan store_t plan with
+      | Error e -> Error e
+      | Ok path -> Ok (plan, path))
+
 (* All plans with their derived status. *)
 let list_status ~(rt : Reforge_ports.Runtime.t) ~root () :
     ((Change_plan.t * Change_plan.status) list, string) result =

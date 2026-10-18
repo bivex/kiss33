@@ -16,3 +16,5 @@ include Plan_inline_fn
 include Plan_field
 include Plan_constructor
 include Plan_module
+include Plan_reorder_args
+include Plan_remove_unused_fn
