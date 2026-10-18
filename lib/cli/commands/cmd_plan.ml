@@ -5,145 +5,72 @@ open Cli_common
 
 module App = Reforge_app
 
-let run_plan_move ~rt ~json ~plain root src dst =
-  if src = "" || dst = "" then begin
-    let msg = "missing required arguments: SRC DST" in
-    if json then (emit_error_json ~command:"plan move" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
+let msg_missing_file = "missing required argument: FILE"
+let msg_missing_file_fn = "missing required arguments: FILE FN"
+
+let fail_cmd ~command ~json msg =
+  if json then emit_error_json ~command msg
+  else prerr_endline ("error: " ^ msg);
+  exit exit_usage_code
+
+let check_non_empty ~command ~json msg args =
+  if List.exists (fun s -> s = "") args then fail_cmd ~command ~json msg
+
+let execute_plan ~command ~rt ~root ~json f =
   let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_move ~rt ~config ~root ~src ~dst ~semantic:(not plain) () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan move" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan move" ~json plan path
+  match f ~config with
+  | Error e -> fail_cmd ~command ~json e
+  | Ok (plan, path) -> emit_plan_created ~command ~json plan path
+
+let run_plan_move ~rt ~json ~plain root src dst =
+  check_non_empty ~command:"plan move" ~json "missing required arguments: SRC DST" [src; dst];
+  execute_plan ~command:"plan move" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_move ~rt ~config ~root ~src ~dst ~semantic:(not plain) ())
 
 let run_plan_rename_fn ~rt ~json root file old_name new_name =
-  if file = "" || old_name = "" || new_name = "" then begin
-    let msg = "missing required arguments: FILE OLD_NAME NEW_NAME" in
-    if json then (emit_error_json ~command:"plan rename-fn" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_rename_fn ~rt ~config ~root ~file ~old_name ~new_name () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan rename-fn" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan rename-fn" ~json plan path
+  check_non_empty ~command:"plan rename-fn" ~json "missing required arguments: FILE OLD_NAME NEW_NAME" [file; old_name; new_name];
+  execute_plan ~command:"plan rename-fn" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_rename_fn ~rt ~config ~root ~file ~old_name ~new_name ())
 
 let run_plan_move_fn ~rt ~json root src dst fn_name =
-  if src = "" || dst = "" || fn_name = "" then begin
-    let msg = "missing required arguments: SRC DST FN" in
-    if json then (emit_error_json ~command:"plan move-fn" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_move_fn ~rt ~config ~root ~src ~dst ~fn_name () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan move-fn" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan move-fn" ~json plan path
+  check_non_empty ~command:"plan move-fn" ~json "missing required arguments: SRC DST FN" [src; dst; fn_name];
+  execute_plan ~command:"plan move-fn" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_move_fn ~rt ~config ~root ~src ~dst ~fn_name ())
 
 let run_plan_rename_arg ~rt ~json root file fn_name old_arg new_arg =
-  if file = "" || fn_name = "" || old_arg = "" || new_arg = "" then begin
-    let msg = "missing required arguments: FILE FN OLD_ARG NEW_ARG" in
-    if json then (emit_error_json ~command:"plan rename-arg" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_rename_arg ~rt ~config ~root ~file ~fn_name ~old_arg ~new_arg () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan rename-arg" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan rename-arg" ~json plan path
+  check_non_empty ~command:"plan rename-arg" ~json "missing required arguments: FILE FN OLD_ARG NEW_ARG" [file; fn_name; old_arg; new_arg];
+  execute_plan ~command:"plan rename-arg" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_rename_arg ~rt ~config ~root ~file ~fn_name ~old_arg ~new_arg ())
 
 let run_plan_remove_arg ~rt ~json root file fn_name arg_name =
-  if file = "" || fn_name = "" || arg_name = "" then begin
-    let msg = "missing required arguments: FILE FN ARG" in
-    if json then (emit_error_json ~command:"plan remove-arg" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_remove_arg ~rt ~config ~root ~file ~fn_name ~arg_name () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan remove-arg" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan remove-arg" ~json plan path
+  check_non_empty ~command:"plan remove-arg" ~json "missing required arguments: FILE FN ARG" [file; fn_name; arg_name];
+  execute_plan ~command:"plan remove-arg" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_remove_arg ~rt ~config ~root ~file ~fn_name ~arg_name ())
 
 let run_plan_label_arg ~rt ~json root file fn_name arg_name label =
-  if file = "" || fn_name = "" || arg_name = "" || label = "" then begin
-    let msg = "missing required arguments: FILE FN ARG LABEL" in
-    if json then (emit_error_json ~command:"plan label-arg" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_label_arg ~rt ~config ~root ~file ~fn_name ~arg_name ~label () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan label-arg" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan label-arg" ~json plan path
+  check_non_empty ~command:"plan label-arg" ~json "missing required arguments: FILE FN ARG LABEL" [file; fn_name; arg_name; label];
+  execute_plan ~command:"plan label-arg" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_label_arg ~rt ~config ~root ~file ~fn_name ~arg_name ~label ())
 
 let run_plan_extract_constant ~rt ~json root file literal const_name =
-  if file = "" || literal = "" || const_name = "" then begin
-    let msg = "missing required arguments: FILE LITERAL CONST_NAME" in
-    if json then (emit_error_json ~command:"plan extract-constant" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_extract_constant ~rt ~config ~root ~file ~literal ~const_name () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan extract-constant" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan extract-constant" ~json plan path
+  check_non_empty ~command:"plan extract-constant" ~json "missing required arguments: FILE LITERAL CONST_NAME" [file; literal; const_name];
+  execute_plan ~command:"plan extract-constant" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_extract_constant ~rt ~config ~root ~file ~literal ~const_name ())
 
 let run_plan_unlabel_arg ~rt ~json root file fn_name label =
-  if file = "" || fn_name = "" || label = "" then begin
-    let msg = "missing required arguments: FILE FN LABEL" in
-    if json then (emit_error_json ~command:"plan unlabel-arg" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_unlabel_arg ~rt ~config ~root ~file ~fn_name ~label () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan unlabel-arg" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan unlabel-arg" ~json plan path
+  check_non_empty ~command:"plan unlabel-arg" ~json "missing required arguments: FILE FN LABEL" [file; fn_name; label];
+  execute_plan ~command:"plan unlabel-arg" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_unlabel_arg ~rt ~config ~root ~file ~fn_name ~label ())
 
 let run_plan_rename_type ~rt ~json root file old_name new_name =
-  if file = "" || old_name = "" || new_name = "" then begin
-    let msg = "missing required arguments: FILE OLD_TYPE NEW_TYPE" in
-    if json then (emit_error_json ~command:"plan rename-type" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_rename_type ~rt ~config ~root ~file ~old_name ~new_name () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan rename-type" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan rename-type" ~json plan path
+  check_non_empty ~command:"plan rename-type" ~json "missing required arguments: FILE OLD_TYPE NEW_TYPE" [file; old_name; new_name];
+  execute_plan ~command:"plan rename-type" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_rename_type ~rt ~config ~root ~file ~old_name ~new_name ())
 
 let run_plan_remove_unused_opens ~rt ~json root file =
-  if file = "" then begin
-    let msg = "missing required argument: FILE" in
-    if json then (emit_error_json ~command:"plan remove-unused-opens" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_remove_unused_opens ~rt ~config ~root ~file () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan remove-unused-opens" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan remove-unused-opens" ~json plan path
+  check_non_empty ~command:"plan remove-unused-opens" ~json msg_missing_file [file];
+  execute_plan ~command:"plan remove-unused-opens" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_remove_unused_opens ~rt ~config ~root ~file ())
 
 let run_plan_introduce_param_object ~rt ~json root file fn_name raw_args record_name =
   let args =
@@ -151,103 +78,41 @@ let run_plan_introduce_param_object ~rt ~json root file fn_name raw_args record_
     |> List.map String.trim
     |> List.filter (fun s -> s <> "")
   in
-  if file = "" || fn_name = "" || args = [] || record_name = "" then begin
-    let msg = "missing required arguments: FILE FN --args <A,B,...> --record <TYPE_NAME>" in
-    if json then (emit_error_json ~command:"plan introduce-param-object" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_introduce_param_object ~rt ~config ~root ~file ~fn_name ~args ~record_name () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan introduce-param-object" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan introduce-param-object" ~json plan path
+  if file = "" || fn_name = "" || args = [] || record_name = "" then
+    fail_cmd ~command:"plan introduce-param-object" ~json "missing required arguments: FILE FN --args <A,B,...> --record <TYPE_NAME>";
+  execute_plan ~command:"plan introduce-param-object" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_introduce_param_object ~rt ~config ~root ~file ~fn_name ~args ~record_name ())
 
 let run_plan_extract_fn ~rt ~json root file range new_fn_name =
-  if file = "" || range = "" || new_fn_name = "" then begin
-    let msg = "missing required arguments: FILE RANGE NEW_FN_NAME" in
-    if json then (emit_error_json ~command:"plan extract-fn" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_extract_fn ~rt ~config ~root ~file ~range ~new_fn_name () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan extract-fn" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan extract-fn" ~json plan path
+  check_non_empty ~command:"plan extract-fn" ~json "missing required arguments: FILE RANGE NEW_FN_NAME" [file; range; new_fn_name];
+  execute_plan ~command:"plan extract-fn" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_extract_fn ~rt ~config ~root ~file ~range ~new_fn_name ())
 
 let run_plan_decompose_match ~rt ~json root file fn_name =
-  if file = "" || fn_name = "" then begin
-    let msg = "missing required arguments: FILE FN" in
-    if json then (emit_error_json ~command:"plan decompose-match" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_decompose_match ~rt ~config ~root ~file ~fn_name () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan decompose-match" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan decompose-match" ~json plan path
+  check_non_empty ~command:"plan decompose-match" ~json msg_missing_file_fn [file; fn_name];
+  execute_plan ~command:"plan decompose-match" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_decompose_match ~rt ~config ~root ~file ~fn_name ())
 
 let run_plan_inline_fn ~rt ~json root file fn_name =
-  if file = "" || fn_name = "" then begin
-    let msg = "missing required arguments: FILE FN" in
-    if json then (emit_error_json ~command:"plan inline-fn" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_inline_fn ~rt ~config ~root ~file ~fn_name () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan inline-fn" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan inline-fn" ~json plan path
+  check_non_empty ~command:"plan inline-fn" ~json msg_missing_file_fn [file; fn_name];
+  execute_plan ~command:"plan inline-fn" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_inline_fn ~rt ~config ~root ~file ~fn_name ())
 
 let run_plan_rename_field ~rt ~json root file type_name old_field new_field =
-  if file = "" || type_name = "" || old_field = "" || new_field = "" then begin
-    let msg = "missing required arguments: FILE TYPE OLD_FIELD NEW_FIELD" in
-    if json then (emit_error_json ~command:"plan rename-field" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_rename_field ~rt ~config ~root ~file ~type_name ~old_field ~new_field () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan rename-field" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan rename-field" ~json plan path
+  check_non_empty ~command:"plan rename-field" ~json "missing required arguments: FILE TYPE OLD_FIELD NEW_FIELD" [file; type_name; old_field; new_field];
+  execute_plan ~command:"plan rename-field" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_rename_field ~rt ~config ~root ~file ~type_name ~old_field ~new_field ())
 
 let run_plan_rename_constructor ~rt ~json root file type_name old_ctor new_ctor =
-  if file = "" || type_name = "" || old_ctor = "" || new_ctor = "" then begin
-    let msg = "missing required arguments: FILE TYPE OLD_CTOR NEW_CTOR" in
-    if json then (emit_error_json ~command:"plan rename-constructor" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_rename_constructor ~rt ~config ~root ~file ~type_name ~old_ctor ~new_ctor () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan rename-constructor" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan rename-constructor" ~json plan path
+  check_non_empty ~command:"plan rename-constructor" ~json "missing required arguments: FILE TYPE OLD_CTOR NEW_CTOR" [file; type_name; old_ctor; new_ctor];
+  execute_plan ~command:"plan rename-constructor" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_rename_constructor ~rt ~config ~root ~file ~type_name ~old_ctor ~new_ctor ())
 
 let run_plan_rename_module ~rt ~json root file old_name new_name =
-  if old_name = "" || new_name = "" then begin
-    let msg = "missing required arguments: SRC_MODULE NEW_MODULE" in
-    if json then (emit_error_json ~command:"plan rename-module" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
+  check_non_empty ~command:"plan rename-module" ~json "missing required arguments: SRC_MODULE NEW_MODULE" [old_name; new_name];
   let file_opt = if file = "" then None else Some file in
-  match App.Plan_refactoring.plan_rename_module ~rt ~config ~root ?file:file_opt ~old_name ~new_name () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan rename-module" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan rename-module" ~json plan path
+  execute_plan ~command:"plan rename-module" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_rename_module ~rt ~config ~root ?file:file_opt ~old_name ~new_name ())
 
 let run_plan_reorder_args ~rt ~json root file fn_name raw_order =
   let new_order =
@@ -256,118 +121,45 @@ let run_plan_reorder_args ~rt ~json root file fn_name raw_order =
     |> List.map String.trim
     |> List.filter (fun s -> s <> "")
   in
-  if file = "" || fn_name = "" || new_order = [] then begin
-    let msg = "missing required arguments: FILE FN NEW_ORDER" in
-    if json then (emit_error_json ~command:"plan reorder-args" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_reorder_args ~rt ~config ~root ~file ~fn_name ~new_order () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan reorder-args" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan reorder-args" ~json plan path
+  if file = "" || fn_name = "" || new_order = [] then
+    fail_cmd ~command:"plan reorder-args" ~json "missing required arguments: FILE FN NEW_ORDER";
+  execute_plan ~command:"plan reorder-args" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_reorder_args ~rt ~config ~root ~file ~fn_name ~new_order ())
 
 let run_plan_remove_unused_fn ~rt ~json root file fn_name =
-  if file = "" || fn_name = "" then begin
-    let msg = "missing required arguments: FILE FN" in
-    if json then (emit_error_json ~command:"plan remove-unused-fn" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_remove_unused_fn ~rt ~config ~root ~file ~fn_name () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan remove-unused-fn" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan remove-unused-fn" ~json plan path
+  check_non_empty ~command:"plan remove-unused-fn" ~json msg_missing_file_fn [file; fn_name];
+  execute_plan ~command:"plan remove-unused-fn" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_remove_unused_fn ~rt ~config ~root ~file ~fn_name ())
 
 let run_plan_qualify_open ~rt ~json root file mod_name =
-  if file = "" || mod_name = "" then begin
-    let msg = "missing required arguments: FILE MODULE" in
-    if json then (emit_error_json ~command:"plan qualify-open" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_qualify_open ~rt ~config ~root ~file ~mod_name () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan qualify-open" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan qualify-open" ~json plan path
+  check_non_empty ~command:"plan qualify-open" ~json "missing required arguments: FILE MODULE" [file; mod_name];
+  execute_plan ~command:"plan qualify-open" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_qualify_open ~rt ~config ~root ~file ~mod_name ())
 
 let run_plan_wrap_primitive ~rt ~json root file type_name primitive =
-  if file = "" || type_name = "" || primitive = "" then begin
-    let msg = "missing required arguments: FILE TYPE_NAME PRIMITIVE" in
-    if json then (emit_error_json ~command:"plan wrap-primitive" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_wrap_primitive ~rt ~config ~root ~file ~type_name ~primitive () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan wrap-primitive" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan wrap-primitive" ~json plan path
+  check_non_empty ~command:"plan wrap-primitive" ~json "missing required arguments: FILE TYPE_NAME PRIMITIVE" [file; type_name; primitive];
+  execute_plan ~command:"plan wrap-primitive" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_wrap_primitive ~rt ~config ~root ~file ~type_name ~primitive ())
 
 let run_plan_replace_exception_with_result ~rt ~json root file fn_name =
-  if file = "" || fn_name = "" then begin
-    let msg = "missing required arguments: FILE FN" in
-    if json then (emit_error_json ~command:"plan replace-exception-with-result" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_replace_exception_with_result ~rt ~config ~root ~file ~fn_name () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan replace-exception-with-result" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan replace-exception-with-result" ~json plan path
+  check_non_empty ~command:"plan replace-exception-with-result" ~json msg_missing_file_fn [file; fn_name];
+  execute_plan ~command:"plan replace-exception-with-result" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_replace_exception_with_result ~rt ~config ~root ~file ~fn_name ())
 
 let run_plan_extract_mli ~rt ~json root file =
-  if file = "" then begin
-    let msg = "missing required argument: FILE" in
-    if json then (emit_error_json ~command:"plan extract-mli" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_extract_mli ~rt ~config ~root ~file () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan extract-mli" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan extract-mli" ~json plan path
+  check_non_empty ~command:"plan extract-mli" ~json msg_missing_file [file];
+  execute_plan ~command:"plan extract-mli" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_extract_mli ~rt ~config ~root ~file ())
 
 let run_plan_sync_mli ~rt ~json root file =
-  if file = "" then begin
-    let msg = "missing required argument: FILE" in
-    if json then (emit_error_json ~command:"plan sync-mli" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_sync_mli ~rt ~config ~root ~file () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan sync-mli" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan sync-mli" ~json plan path
+  check_non_empty ~command:"plan sync-mli" ~json msg_missing_file [file];
+  execute_plan ~command:"plan sync-mli" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_sync_mli ~rt ~config ~root ~file ())
 
 let run_plan_split_module ~rt ~json root file submodule functions =
-  if file = "" || submodule = "" || functions = "" then begin
-    let msg = "missing required arguments: FILE --submodule <NAME> --functions <FN1,FN2>" in
-    if json then (emit_error_json ~command:"plan split-module" msg; exit exit_usage_code)
-    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
-  end;
+  check_non_empty ~command:"plan split-module" ~json
+    "missing required arguments: FILE --submodule <NAME> --functions <FN1,FN2>"
+    [file; submodule; functions];
   let fn_list = List.filter (( <> ) "") (List.map String.trim (String.split_on_char ',' functions)) in
-  let config = Cli_config.load ~rt ~root in
-  match App.Plan_refactoring.plan_split_module ~rt ~config ~root ~file ~submodule ~functions:fn_list () with
-  | Error e ->
-      if json then (emit_error_json ~command:"plan split-module" e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok (plan, path) ->
-      emit_plan_created ~command:"plan split-module" ~json plan path
-
-
-
-
+  execute_plan ~command:"plan split-module" ~rt ~root ~json (fun ~config ->
+    App.Plan_refactoring.plan_split_module ~rt ~config ~root ~file ~submodule ~functions:fn_list ())
