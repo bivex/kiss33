@@ -137,6 +137,7 @@ let test_cycles () =
       module_defs = [];
       value_defs = [];
       val_specs = [];
+      type_defs = [];
       references = [ { ref_segments = [ "B"; "foo" ]; ref_loc = loc; ref_context = Source_file.Ref_value } ];
       call_sites = [];
       literals = [];
@@ -149,6 +150,7 @@ let test_cycles () =
       module_defs = [];
       value_defs = [];
       val_specs = [];
+      type_defs = [];
       references = [ { ref_segments = [ "C"; "bar" ]; ref_loc = loc; ref_context = Source_file.Ref_value } ];
       call_sites = [];
       literals = [];
@@ -161,6 +163,7 @@ let test_cycles () =
       module_defs = [];
       value_defs = [];
       val_specs = [];
+      type_defs = [];
       references = [ { ref_segments = [ "A"; "baz" ]; ref_loc = loc; ref_context = Source_file.Ref_value } ];
       call_sites = [];
       literals = [];
@@ -765,6 +768,341 @@ let test_extract_constant_errors () =
    | Error msg -> Alcotest.(check bool) "error has invalid name" true (String.starts_with ~prefix:"invalid OCaml identifier for constant" msg)
    | Ok _ -> Alcotest.fail "expected error for invalid constant identifier")
 
+let test_type_analyzer () =
+  let module An = (val Reforge_infra.Ocaml_analyzer.ocaml_analyzer) in
+  let an = An.create () in
+  let ml_content =
+    "type color = Red | Green | Blue\n\
+     type point = { x : int; y : int }\n\
+     type alias_t = int\n\
+     exception Oops\n\
+     module Inner = struct type inner_t = A end\n\
+     let use (p : point) (c : color) = match c with Red -> p.x | _ -> p.y\n"
+  in
+  let a = An.analyze an ~path:"lib/kinds.ml" ~content:ml_content in
+  Alcotest.(check bool) "parse ok" true a.Source_file.parse_ok;
+  let td_names = List.map (fun (td : Source_file.type_def) -> td.td_name) a.Source_file.type_defs in
+  Alcotest.(check bool) "declares color" true (List.mem "color" td_names);
+  Alcotest.(check bool) "declares point" true (List.mem "point" td_names);
+  Alcotest.(check bool) "declares dotted Inner.inner_t" true (List.mem "Inner.inner_t" td_names);
+  Alcotest.(check bool) "records exception" true
+    (List.exists
+       (fun (td : Source_file.type_def) ->
+          td.td_name = "" && List.mem "Oops" (List.map fst td.td_constructors))
+       a.Source_file.type_defs);
+  (match List.find_opt (fun (td : Source_file.type_def) -> td.td_name = "color") a.Source_file.type_defs with
+   | Some color_td ->
+       Alcotest.(check (list string)) "color constructors" [ "Red"; "Green"; "Blue" ]
+         (List.map fst color_td.td_constructors);
+       Alcotest.(check bool) "color is variant" true (color_td.td_kind = Source_file.Type_variant)
+   | None -> Alcotest.fail "color type def missing");
+  (match List.find_opt (fun (td : Source_file.type_def) -> td.td_name = "point") a.Source_file.type_defs with
+   | Some point_td ->
+       Alcotest.(check (list string)) "point fields" [ "x"; "y" ] (List.map fst point_td.td_fields)
+   | None -> Alcotest.fail "point type def missing");
+  (* bare type references are visible with Ref_type context *)
+  let has_type_ref name =
+    List.exists
+      (fun (r : Source_file.reference) ->
+         r.ref_context = Source_file.Ref_type && r.ref_segments = [ name ])
+      a.Source_file.references
+  in
+  Alcotest.(check bool) "uses point as type" true (has_type_ref "point");
+  Alcotest.(check bool) "uses color as type" true (has_type_ref "color")
+
+let test_local_open_context () =
+  let module An = (val Reforge_infra.Ocaml_analyzer.ocaml_analyzer) in
+  let an = An.create () in
+  let content = "let x = let open Sys in getenv \"HOME\"\nopen List\nlet y = length [ 1 ]\n" in
+  let a = An.analyze an ~path:"lib/foo.ml" ~content in
+  Alcotest.(check bool) "local open recorded" true
+    (List.exists
+       (fun (r : Source_file.reference) ->
+          r.ref_context = Source_file.Ref_local_open && r.ref_segments = [ "Sys" ])
+       a.Source_file.references);
+  Alcotest.(check bool) "top open recorded" true
+    (List.exists
+       (fun (r : Source_file.reference) ->
+          r.ref_context = Source_file.Ref_open && r.ref_segments = [ "List" ])
+       a.Source_file.references)
+
+let test_e2e_unlabel_arg () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/util.ml" "let greet ~prefix name = prefix ^ \" \" ^ name\n";
+  write "lib/util.mli" "val greet : prefix:string -> string -> string\n";
+  write "bin/main.ml" "let () = print_endline (Sample_lib.Util.greet ~prefix:\"Hello\" \"World\")\n";
+
+  match Reforge_app.Plan_refactoring.plan_unlabel_arg ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"greet" ~label:"prefix" () with
+  | Error e -> Alcotest.fail ("plan_unlabel_arg failed: " ^ e)
+  | Ok (plan, _) -> (
+      let edited_files =
+        List.filter_map
+          (function
+            | Change_plan.Op_edit_file { path; _ } -> Some path
+            | _ -> None)
+          plan.cp_ops
+        |> List.sort compare
+      in
+      Alcotest.(check (list string)) "edited files" [ "bin/main.ml"; "lib/util.ml"; "lib/util.mli" ] edited_files;
+      match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+      | Error e -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure e)
+      | Ok _ ->
+          let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+          let mli_c = In_channel.with_open_bin (Filename.concat root "lib/util.mli") In_channel.input_all in
+          let main_c = In_channel.with_open_bin (Filename.concat root "bin/main.ml") In_channel.input_all in
+          Alcotest.(check string) "util.ml positional" "let greet prefix name = prefix ^ \" \" ^ name\n" util_c;
+          Alcotest.(check string) "util.mli positional" "val greet : string -> string -> string\n" mli_c;
+          Alcotest.(check string) "main.ml positional"
+            "let () = print_endline (Sample_lib.Util.greet \"Hello\" \"World\")\n" main_c;
+
+          (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           | Error e -> Alcotest.fail ("validate failed: " ^ e)
+           | Ok checks ->
+               let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+               Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+
+          (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+           | Error e -> Alcotest.fail ("undo failed: " ^ e)
+           | Ok _ ->
+               let restored = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+               Alcotest.(check string) "util.ml restored" "let greet ~prefix name = prefix ^ \" \" ^ name\n" restored))
+
+let test_e2e_unlabel_arg_punned () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/util.ml" "let greet ~prefix name = prefix ^ \" \" ^ name\n";
+  write "bin/main.ml" "let () = let prefix = \"Hi\" in print_endline (Sample_lib.Util.greet ~prefix \"World\")\n";
+
+  match Reforge_app.Plan_refactoring.plan_unlabel_arg ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"greet" ~label:"prefix" () with
+  | Error e -> Alcotest.fail ("plan_unlabel_arg failed: " ^ e)
+  | Ok (plan, _) -> (
+      match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+      | Error e -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure e)
+      | Ok _ ->
+          let main_c = In_channel.with_open_bin (Filename.concat root "bin/main.ml") In_channel.input_all in
+          Alcotest.(check string) "punned label unlabelled"
+            "let () = let prefix = \"Hi\" in print_endline (Sample_lib.Util.greet prefix \"World\")\n" main_c)
+
+let test_unlabel_arg_errors () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  (* Not a labeled parameter *)
+  let p = Filename.concat root "lib/util.ml" in
+  let oc = open_out_bin p in
+  output_string oc "let add a b = a + b\n";
+  close_out oc;
+  (match Reforge_app.Plan_refactoring.plan_unlabel_arg ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"add" ~label:"a" () with
+   | Error msg -> Alcotest.(check bool) "error not labelled" true (String.starts_with ~prefix:"argument 'a' of function add" msg)
+   | Ok _ -> Alcotest.fail "expected error for positional parameter");
+
+  (* Optional parameter: dropping '?' would change defaulting semantics *)
+  let oc = open_out_bin p in
+  output_string oc "let opt ?mode x = match mode with Some m -> x + m | None -> x\n";
+  close_out oc;
+  (match Reforge_app.Plan_refactoring.plan_unlabel_arg ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"opt" ~label:"mode" () with
+   | Error msg -> Alcotest.(check bool) "error optional unsafe" true (String.starts_with ~prefix:"cannot unlabel optional argument 'mode'" msg)
+   | Ok _ -> Alcotest.fail "expected error for optional parameter");
+
+  (* Out-of-order call site: label passed first, positional after *)
+  let oc = open_out_bin p in
+  output_string oc "let mix a ~b c = a + b + c\nlet run () = mix ~b:1 2 3\n";
+  close_out oc;
+  (match Reforge_app.Plan_refactoring.plan_unlabel_arg ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~fn_name:"mix" ~label:"b" () with
+   | Error msg -> Alcotest.(check bool) "error call order" true (String.starts_with ~prefix:"cannot unlabel 'b' in mix" msg)
+   | Ok _ -> Alcotest.fail "expected error for out-of-order call site")
+
+let test_e2e_rename_type () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/util.ml" "type token = Word of string | Eof\nlet peek (t : token) = match t with Word s -> s | Eof -> \"\"\n";
+  write "lib/util.mli" "type token = Word of string | Eof\nval peek : token -> string\n";
+  write "bin/main.ml" "let describe (t : Sample_lib.Util.token) = Sample_lib.Util.peek t\n";
+
+  match Reforge_app.Plan_refactoring.plan_rename_type ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~old_name:"token" ~new_name:"lexeme" () with
+  | Error e -> Alcotest.fail ("plan_rename_type failed: " ^ e)
+  | Ok (plan, _) -> (
+      let edited_files =
+        List.filter_map
+          (function
+            | Change_plan.Op_edit_file { path; _ } -> Some path
+            | _ -> None)
+          plan.cp_ops
+        |> List.sort compare
+      in
+      Alcotest.(check (list string)) "edited files" [ "bin/main.ml"; "lib/util.ml"; "lib/util.mli" ] edited_files;
+      Alcotest.(check bool) "warns about constructors" true
+        (List.exists (fun w -> String.length w > 0) plan.cp_warnings);
+      match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+      | Error e -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure e)
+      | Ok _ ->
+          let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+          let mli_c = In_channel.with_open_bin (Filename.concat root "lib/util.mli") In_channel.input_all in
+          let main_c = In_channel.with_open_bin (Filename.concat root "bin/main.ml") In_channel.input_all in
+          Alcotest.(check string) "util.ml renamed"
+            "type lexeme = Word of string | Eof\nlet peek (t : lexeme) = match t with Word s -> s | Eof -> \"\"\n" util_c;
+          Alcotest.(check string) "util.mli renamed"
+            "type lexeme = Word of string | Eof\nval peek : lexeme -> string\n" mli_c;
+          Alcotest.(check string) "main.ml renamed"
+            "let describe (t : Sample_lib.Util.lexeme) = Sample_lib.Util.peek t\n" main_c;
+
+          (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           | Error e -> Alcotest.fail ("validate failed: " ^ e)
+           | Ok checks ->
+               let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+               Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+
+          (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+           | Error e -> Alcotest.fail ("undo failed: " ^ e)
+           | Ok _ ->
+               let restored = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+               Alcotest.(check string) "util.ml restored"
+                 "type token = Word of string | Eof\nlet peek (t : token) = match t with Word s -> s | Eof -> \"\"\n" restored))
+
+let test_rename_type_errors () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let p = Filename.concat root "lib/util.ml" in
+  let oc = open_out_bin p in
+  output_string oc "type token = A\nlet peek (t : token) = t\n";
+  close_out oc;
+
+  (* Type not found *)
+  (match Reforge_app.Plan_refactoring.plan_rename_type ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~old_name:"nope" ~new_name:"thing" () with
+   | Error msg -> Alcotest.(check bool) "error not found" true (String.starts_with ~prefix:"type 'nope' not found" msg)
+   | Ok _ -> Alcotest.fail "expected error for unknown type");
+
+  (* Collision with existing type *)
+  (match Reforge_app.Plan_refactoring.plan_rename_type ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~old_name:"token" ~new_name:"token" () with
+   | Error msg -> Alcotest.(check bool) "error same name" true (String.starts_with ~prefix:"source and destination are the same" msg)
+   | Ok _ -> Alcotest.fail "expected error for same name");
+
+  (* Invalid type identifier *)
+  (match Reforge_app.Plan_refactoring.plan_rename_type ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~old_name:"token" ~new_name:"BadName" () with
+   | Error msg -> Alcotest.(check bool) "error invalid name" true (String.starts_with ~prefix:"invalid OCaml type identifier" msg)
+   | Ok _ -> Alcotest.fail "expected error for invalid type name")
+
+let test_e2e_remove_unused_opens () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/dune" "(library (name sample_lib) (modules util helper kids))\n";
+  write "lib/helper.ml" "let assist () = 1\n";
+  write "lib/kids.ml" "let play () = 2\n";
+  write "lib/util.ml" "open Helper\nopen Kids\nlet value () = play () + 1\n";
+  write "lib/util.mli" "val value : unit -> int\n";
+
+  match Reforge_app.Plan_refactoring.plan_remove_unused_opens ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" () with
+  | Error e -> Alcotest.fail ("plan_remove_unused_opens failed: " ^ e)
+  | Ok (plan, _) -> (
+      (* exactly one edit file: lib/util.ml with a single removal *)
+      (match plan.cp_ops with
+       | [ Change_plan.Op_edit_file { path; edits; _ } ] ->
+           Alcotest.(check string) "edits util.ml" "lib/util.ml" path;
+           Alcotest.(check int) "one open dropped" 1 (List.length edits)
+       | _ -> Alcotest.fail "expected a single edit_file op");
+      match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+      | Error e -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure e)
+      | Ok _ ->
+          let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+          Alcotest.(check string) "unused open dropped, used open kept"
+            "open Kids\nlet value () = play () + 1\n" util_c;
+
+          (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           | Error e -> Alcotest.fail ("validate failed: " ^ e)
+           | Ok checks ->
+               let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+               Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+
+          (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+           | Error e -> Alcotest.fail ("undo failed: " ^ e)
+           | Ok _ ->
+               let restored = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+               Alcotest.(check string) "util.ml restored" "open Helper\nopen Kids\nlet value () = play () + 1\n" restored))
+
+let test_remove_unused_opens_keeps_unresolvable () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  (* open of a module that does not exist in the repo: exports unknown,
+     the open must be kept and a warning recorded *)
+  let p = Filename.concat root "lib/util.ml" in
+  let oc = open_out_bin p in
+  output_string oc "open Some_external_lib\nlet hello () = \"world\"\n";
+  close_out oc;
+
+  match Reforge_app.Plan_refactoring.plan_remove_unused_opens ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" () with
+  | Error msg -> Alcotest.(check bool) "no removable opens" true (String.starts_with ~prefix:"no unused opens found" msg)
+  | Ok (plan, _) ->
+      Alcotest.(check bool) "kept with warning" true
+        (List.exists (fun w -> String.length w > 0) plan.cp_warnings
+         && plan.cp_ops = [])
+
+let test_remove_unused_opens_errors () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  (* No opens at all *)
+  (match Reforge_app.Plan_refactoring.plan_remove_unused_opens ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" () with
+   | Error msg -> Alcotest.(check bool) "error no opens" true (String.starts_with ~prefix:"no unused opens found" msg)
+   | Ok _ -> Alcotest.fail "expected error when there is nothing to remove");
+
+  (* All opens used: nothing removable *)
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/dune" "(library (name sample_lib) (modules util helper))\n";
+  write "lib/helper.ml" "let assist () = 1\n";
+  write "lib/util.ml" "open Helper\nlet value () = assist ()\n";
+  (match Reforge_app.Plan_refactoring.plan_remove_unused_opens ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" () with
+   | Error msg -> Alcotest.(check bool) "error all used" true (String.starts_with ~prefix:"no unused opens found" msg)
+   | Ok _ -> Alcotest.fail "expected error when every open is used")
+
 (* ------------------------------------------------------------------ *)
 (* Test runner                                                        *)
 (* ------------------------------------------------------------------ *)
@@ -777,6 +1115,8 @@ let () =
         [
           Alcotest.test_case "ocaml AST analysis" `Quick test_source_analyzer;
           Alcotest.test_case "function AST analysis" `Quick test_function_analyzer;
+          Alcotest.test_case "type declaration analysis" `Quick test_type_analyzer;
+          Alcotest.test_case "local vs top-level open" `Quick test_local_open_context;
           Alcotest.test_case "dune sexp analysis" `Quick test_dune_analyzer;
         ] );
       ("cycles", [ Alcotest.test_case "Tarjan SCC cycle detection" `Quick test_cycles ]);
@@ -799,6 +1139,14 @@ let () =
           Alcotest.test_case "e2e label-arg punned" `Quick test_e2e_label_arg_punned;
           Alcotest.test_case "e2e extract-constant" `Quick test_e2e_extract_constant;
           Alcotest.test_case "extract-constant errors" `Quick test_extract_constant_errors;
+          Alcotest.test_case "e2e unlabel-arg" `Quick test_e2e_unlabel_arg;
+          Alcotest.test_case "e2e unlabel-arg punned" `Quick test_e2e_unlabel_arg_punned;
+          Alcotest.test_case "unlabel-arg errors" `Quick test_unlabel_arg_errors;
+          Alcotest.test_case "e2e rename-type" `Quick test_e2e_rename_type;
+          Alcotest.test_case "rename-type errors" `Quick test_rename_type_errors;
+          Alcotest.test_case "e2e remove-unused-opens" `Quick test_e2e_remove_unused_opens;
+          Alcotest.test_case "remove-unused-opens keeps unresolvable" `Quick test_remove_unused_opens_keeps_unresolvable;
+          Alcotest.test_case "remove-unused-opens errors" `Quick test_remove_unused_opens_errors;
           Alcotest.test_case "stale plan rejection" `Quick test_stale_plan_rejection;
         ] );
     ]

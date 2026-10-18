@@ -23,7 +23,10 @@ type intent =
   | Rename_arg of { file : string; fn_name : string; old_arg : string; new_arg : string }
   | Remove_arg of { file : string; fn_name : string; arg_name : string }
   | Label_arg of { file : string; fn_name : string; arg_name : string; label : string }
+  | Unlabel_arg of { file : string; fn_name : string; label : string }
   | Extract_constant of { file : string; literal : string; const_name : string }
+  | Rename_type of { file : string; old_name : string; new_name : string }
+  | Remove_unused_opens of { file : string }
 
 type plan_error =
   | Src_not_found of string
@@ -43,6 +46,13 @@ type plan_error =
   | Const_collision of string * string
   | Literal_not_found of string * string
   | Invalid_const_name of string
+  | Arg_not_labelled of string * string * string
+  | Optional_unlabel_unsafe of string * string * string
+  | Unsafe_call_order of string * string * string
+  | Type_not_found of string * string
+  | Type_collision of string * string
+  | Invalid_type_name of string
+  | No_unused_opens of string
 
 let pe_message = function
   | Src_not_found p -> Printf.sprintf "source not found in repository: %s" p
@@ -78,6 +88,24 @@ let pe_message = function
       Printf.sprintf "literal %s not found in %s" lit f
   | Invalid_const_name c ->
       Printf.sprintf "invalid OCaml identifier for constant: '%s'" c
+  | Arg_not_labelled (f, fn, arg) ->
+      Printf.sprintf "argument '%s' of function %s (%s) is not a labeled parameter" arg fn f
+  | Optional_unlabel_unsafe (f, fn, arg) ->
+      Printf.sprintf
+        "cannot unlabel optional argument '%s' of %s (%s): removing '?' changes defaulting semantics at omitted call sites"
+        arg fn f
+  | Unsafe_call_order (label, fn, caller) ->
+      Printf.sprintf
+        "cannot unlabel '%s' in %s: a call site in %s would bind arguments differently once the label is dropped"
+        label fn caller
+  | Type_not_found (f, t) ->
+      Printf.sprintf "type '%s' not found in %s" t f
+  | Type_collision (f, t) ->
+      Printf.sprintf "type '%s' already exists in %s" t f
+  | Invalid_type_name t ->
+      Printf.sprintf "invalid OCaml type identifier: '%s'" t
+  | No_unused_opens f ->
+      Printf.sprintf "no unused opens found in %s" f
 
 (* ---- small content helpers -------------------------------------------- *)
 
@@ -749,7 +777,7 @@ let plan_rename_fn ~(ctx : ctx) ~(file : string) ~(old_name : string) ~(new_name
                            let opens_mod =
                              List.exists
                                (fun (r : Source_file.reference) ->
-                                  r.Source_file.ref_context = Source_file.Ref_open
+                                  Source_file.is_open_context r.Source_file.ref_context
                                   && r.Source_file.ref_segments = within)
                                f_analysis.Source_file.references
                            in
@@ -986,7 +1014,7 @@ let plan_move_fn ~(ctx : ctx) ~(src : string) ~(dst : string) ~(fn_name : string
                                    let opens_src =
                                      List.exists
                                        (fun (r : Source_file.reference) ->
-                                          r.Source_file.ref_context = Source_file.Ref_open
+                                          Source_file.is_open_context r.Source_file.ref_context
                                           && r.Source_file.ref_segments = src_within)
                                        f_analysis.Source_file.references
                                    in
@@ -1212,7 +1240,7 @@ let plan_rename_arg ~(ctx : ctx) ~(file : string) ~(fn_name : string) ~(old_arg 
                                  let opens_mod =
                                    List.exists
                                      (fun (r : Source_file.reference) ->
-                                        r.Source_file.ref_context = Source_file.Ref_open
+                                        Source_file.is_open_context r.Source_file.ref_context
                                         && r.Source_file.ref_segments = within)
                                      f_analysis.Source_file.references
                                  in
@@ -1463,7 +1491,7 @@ let plan_remove_arg ~(ctx : ctx) ~(file : string) ~(fn_name : string) ~(arg_name
                                let opens_mod =
                                  List.exists
                                    (fun (r : Source_file.reference) ->
-                                      r.Source_file.ref_context = Source_file.Ref_open
+                                      Source_file.is_open_context r.Source_file.ref_context
                                       && r.Source_file.ref_segments = within)
                                    f_analysis.Source_file.references
                                in
@@ -1676,7 +1704,7 @@ let plan_label_arg ~(ctx : ctx) ~(file : string) ~(fn_name : string) ~(arg_name 
                                let opens_mod =
                                  List.exists
                                    (fun (r : Source_file.reference) ->
-                                      r.Source_file.ref_context = Source_file.Ref_open
+                                      Source_file.is_open_context r.Source_file.ref_context
                                       && r.Source_file.ref_segments = within)
                                    f_analysis.Source_file.references
                                in
@@ -1889,3 +1917,671 @@ let plan_extract_constant ~(ctx : ctx) ~(file : string) ~(literal : string) ~(co
                         cp_warnings = [];
                         cp_version = ctx.version;
                       }
+
+(* ---- shared planning helpers ------------------------------------------- *)
+
+(* Validate the collected edits against real file contents, hash them and
+   assemble the final change plan. Shared tail of the edit-based planners:
+   every file must still match its content, and edits are applied once in
+   memory so the plan records the exact result hash. *)
+let finish_edit_plan ~(ctx : ctx) ~(warnings : string list) ~description
+    (edits_by_file : (string, Change_plan.edit list) Hashtbl.t) :
+    (Change_plan.t, plan_error) result =
+  let files_to_edit =
+    Hashtbl.fold
+      (fun p es acc ->
+         (p, List.sort (fun a b -> compare a.Change_plan.e_start_off b.Change_plan.e_start_off) es) :: acc)
+      edits_by_file []
+    |> List.sort (fun (a, _) (b, _) -> compare a b)
+  in
+  let edit_ops_res =
+    List.map
+      (fun (edit_path, edits) ->
+         match ctx.content_of edit_path with
+         | None -> Error (Missing_content edit_path)
+         | Some orig_content -> (
+             match Change_plan.apply_edits orig_content edits with
+             | Error msg -> Error (Missing_content (Printf.sprintf "%s: %s" edit_path msg))
+             | Ok new_content ->
+                 Ok
+                   (Change_plan.Op_edit_file
+                      {
+                        path = edit_path;
+                        edits;
+                        original_hash = md5_hex orig_content;
+                        result_hash = md5_hex new_content;
+                      })))
+      files_to_edit
+  in
+  let rec first_error = function
+    | [] -> None
+    | Error e :: _ -> Some e
+    | Ok _ :: rest -> first_error rest
+  in
+  match first_error edit_ops_res with
+  | Some e -> Error e
+  | None ->
+      let ops = List.filter_map (function Ok op -> Some op | Error _ -> None) edit_ops_res in
+      let preconditions =
+        List.map
+          (function
+            | Change_plan.Op_edit_file { path; original_hash; _ } ->
+                Change_plan.Pre_exists { path; hash = original_hash }
+            | _ -> assert false)
+          ops
+      in
+      Ok
+        {
+          Change_plan.cp_id = ctx.id;
+          cp_created_at = ctx.now;
+          cp_description = description;
+          cp_command = ctx.command;
+          cp_ops = ops;
+          cp_preconditions = preconditions;
+          cp_warnings = warnings;
+          cp_version = ctx.version;
+        }
+
+(* All call sites of [fn_name] defined in [file], across the repository.
+   Each entry carries the referencing file's path and content so callers can
+   perform byte-precise rewrites. Matches direct calls, same-scope calls
+   through an open, and within/cross-scope qualified calls. *)
+let call_sites_of ~(ctx : ctx) ~(file : string) ~(fn_name : string) :
+    (string * string * Source_file.call_site) list =
+  let forms = Repository.module_forms ctx.repo file in
+  let sc_dir, within, cross =
+    match forms with
+    | Some (sc, w, c) -> (Some sc.Repository.sc_dir, w, c)
+    | None -> (None, nominal_forms file, nominal_forms file)
+  in
+  Repository.ocaml_files ctx.repo
+  |> List.filter_map (fun fe ->
+         let p = fe.Repository.fe_path in
+         match ctx.analysis_of p, ctx.content_of p with
+         | Some f_analysis, Some content ->
+             let f_scope =
+               match Repository.governing_scope ctx.repo p with
+               | Some (sc, _) -> Some sc.Repository.sc_dir
+               | None -> None
+             in
+             let is_same_scope = f_scope = sc_dir in
+             let is_decl_file = p = file in
+             let opens_mod =
+               List.exists
+                 (fun (r : Source_file.reference) ->
+                    Source_file.is_open_context r.ref_context
+                    && r.ref_segments = within)
+                 f_analysis.Source_file.references
+             in
+             Some
+               (List.filter
+                  (fun (cs : Source_file.call_site) ->
+                     let segs = cs.cs_fn_segments in
+                     (is_decl_file && segs = [ fn_name ])
+                     || (is_same_scope && opens_mod && segs = [ fn_name ])
+                     || (is_same_scope && segs = within @ [ fn_name ])
+                     || segs = cross @ [ fn_name ])
+                  f_analysis.Source_file.call_sites
+               |> List.map (fun cs -> (p, content, cs)))
+         | _ -> None)
+  |> List.concat
+
+
+(* ---- unlabel-arg --------------------------------------------------------- *)
+
+let plan_unlabel_arg ~(ctx : ctx) ~(file : string) ~(fn_name : string) ~(label : string) :
+    (Change_plan.t, plan_error) result =
+  let file = Path.normalize file in
+  if not (is_valid_ident label) then Error (Invalid_arg_name label)
+  else
+    match Repository.find_file ctx.repo file with
+    | None -> Error (Src_not_found file)
+    | Some _ -> (
+        match ctx.analysis_of file, ctx.content_of file with
+        | None, _ | _, None -> Error (Missing_content file)
+        | Some file_analysis, Some file_content -> (
+            match List.find_opt (fun vd -> vd.Source_file.vd_name = fn_name) file_analysis.Source_file.value_defs with
+            | None -> Error (Fn_not_found (file, fn_name))
+            | Some fn_def -> (
+                match
+                  List.find_opt
+                    (fun (p : Source_file.fn_param) ->
+                       match p.Source_file.fp_kind with
+                       | Source_file.Labelled l | Source_file.Optional l -> l = label
+                       | Source_file.Positional -> false)
+                    fn_def.Source_file.vd_params
+                with
+                | Some target_param -> (
+                    match target_param.Source_file.fp_kind with
+                    | Source_file.Optional _ ->
+                        Error (Optional_unlabel_unsafe (file, fn_name, label))
+                    | Source_file.Positional -> assert false
+                    | Source_file.Labelled _ -> (
+                        (* Once the label is dropped the argument binds
+                           positionally: at every call site it must already
+                           stand at the right slot among the positional
+                           arguments, otherwise the rewrite would silently
+                           change the binding. *)
+                        let positional_params_before =
+                          let rec walk acc = function
+                            | (p : Source_file.fn_param) :: rest when p.Source_file.fp_name = target_param.Source_file.fp_name -> acc
+                            | (p : Source_file.fn_param) :: rest ->
+                                walk (if p.Source_file.fp_kind = Source_file.Positional then acc + 1 else acc) rest
+                            | [] -> acc
+                          in
+                          walk 0 fn_def.Source_file.vd_params
+                        in
+                        let sites = call_sites_of ~ctx ~file ~fn_name in
+                        let positional_args_before (cs : Source_file.call_site) : int =
+                          let rec count seen = function
+                            | (ca : Source_file.call_arg) :: rest ->
+                                if ca.Source_file.ca_kind = Source_file.Labelled label then seen
+                                else
+                                  count
+                                    (if ca.Source_file.ca_kind = Source_file.Positional then seen + 1 else seen)
+                                    rest
+                            | [] -> seen
+                          in
+                          count 0 cs.Source_file.cs_args
+                        in
+                        match
+                          List.find_opt
+                            (fun (_, _, cs) -> positional_args_before cs <> positional_params_before)
+                            sites
+                        with
+                        | Some (caller, _, _) -> Error (Unsafe_call_order (label, fn_name, caller))
+                        | None ->
+                            let warnings = ref [] in
+                            let warn msg = warnings := !warnings @ [ msg ] in
+                            (* If the function ever flows as a value, its
+                               label may be supplied at a detached call site
+                               this plan cannot see; say so. *)
+                            let forms = Repository.module_forms ctx.repo file in
+                            let within, cross =
+                              match forms with
+                              | Some (_, w, c) -> (w, c)
+                              | None -> (nominal_forms file, nominal_forms file)
+                            in
+                            let partial_uses =
+                              Repository.ocaml_files ctx.repo
+                              |> List.concat_map (fun fe ->
+                                     match ctx.analysis_of fe.Repository.fe_path with
+                                     | Some f_analysis ->
+                                         let call_heads =
+                                           List.map
+                                             (fun (cs : Source_file.call_site) ->
+                                                cs.Source_file.cs_fn_loc.Source_file.start_off)
+                                             f_analysis.Source_file.call_sites
+                                         in
+                                         List.filter_map
+                                           (fun (r : Source_file.reference) ->
+                                              let matches_fn =
+                                                r.Source_file.ref_context = Source_file.Ref_value
+                                                && (r.Source_file.ref_segments = [ fn_name ]
+                                                    || r.Source_file.ref_segments = within @ [ fn_name ]
+                                                    || r.Source_file.ref_segments = cross @ [ fn_name ])
+                                              in
+                                              if
+                                                matches_fn
+                                                && not
+                                                     (List.mem
+                                                        r.Source_file.ref_loc.Source_file.start_off
+                                                        call_heads)
+                                              then Some fe.Repository.fe_path
+                                              else None)
+                                           f_analysis.Source_file.references
+                                     | None -> [])
+                              |> List.sort_uniq compare
+                            in
+                            if partial_uses <> [] then
+                              warn
+                                (Printf.sprintf
+                                   "%s flows as a value (partial application) in %s; detached call \
+                                    sites are not rewritten"
+                                   fn_name (dotted partial_uses));
+                            let edits_by_file : (string, Change_plan.edit list) Hashtbl.t = Hashtbl.create 16 in
+                            let add_edit p e =
+                              let prev = Option.value ~default:[] (Hashtbl.find_opt edits_by_file p) in
+                              Hashtbl.replace edits_by_file p (e :: prev)
+                            in
+                            (* 1. Strip the label from the definition header:
+                               [~lbl:x] becomes [x]; punned [~lbl] becomes [lbl]. *)
+                            let s_off = target_param.Source_file.fp_full_loc.Source_file.start_off in
+                            let e_off = target_param.Source_file.fp_full_loc.Source_file.end_off in
+                            let slice = String.sub file_content s_off (e_off - s_off) in
+                            let plain = "~" ^ label in
+                            let stripped =
+                              if slice = plain then Some label
+                              else if
+                                String.length slice > String.length plain
+                                && String.sub slice 0 (String.length plain) = plain
+                              then (
+                                let n = String.length slice in
+                                let i = ref (String.length plain) in
+                                while !i < n && slice.[!i] = ' ' do incr i done;
+                                if !i < n && slice.[!i] = ':' then
+                                  Some (String.sub slice (!i + 1) (n - !i - 1))
+                                else None)
+                              else None
+                            in
+                            (match stripped with
+                             | None ->
+                                 Error
+                                   (Missing_content
+                                      (Printf.sprintf "%s: unexpected labeled parameter syntax: %s" file slice))
+                             | Some replacement ->
+                                 add_edit file
+                                   {
+                                     Change_plan.e_start_off = s_off;
+                                     e_end_off = e_off;
+                                     e_start_line = target_param.Source_file.fp_full_loc.Source_file.start_lnum;
+                                     e_end_line = target_param.Source_file.fp_full_loc.Source_file.end_lnum;
+                                     e_replacement = replacement;
+                                     e_reason = Printf.sprintf "unlabel param ~%s in %s" label fn_name;
+                                   };
+                                 (* 2. Companion .mli: drop the [label:] prefix
+                                    from the arrow; the parameter type stays. *)
+                                 let mli_file = Filename.remove_extension file ^ ".mli" in
+                                 (match Repository.find_file ctx.repo mli_file with
+                                  | Some _ -> (
+                                      match ctx.analysis_of mli_file with
+                                      | Some mli_analysis -> (
+                                          match List.find_opt (fun vs -> vs.Source_file.vd_name = fn_name) mli_analysis.Source_file.val_specs with
+                                          | Some vs -> (
+                                              match
+                                                List.find_opt
+                                                  (fun (p : Source_file.fn_param) ->
+                                                     p.Source_file.fp_name = label
+                                                     && p.Source_file.fp_kind = Source_file.Labelled label)
+                                                  vs.Source_file.vd_params
+                                              with
+                                              | Some mli_p ->
+                                                  let arrow_start = mli_p.Source_file.fp_loc.Source_file.start_off in
+                                                  let t1_start = mli_p.Source_file.fp_full_loc.Source_file.start_off in
+                                                  if t1_start > arrow_start then
+                                                    add_edit mli_file
+                                                      {
+                                                        Change_plan.e_start_off = arrow_start;
+                                                        e_end_off = t1_start;
+                                                        e_start_line = mli_p.Source_file.fp_loc.Source_file.start_lnum;
+                                                        e_end_line = mli_p.Source_file.fp_loc.Source_file.end_lnum;
+                                                        e_replacement = "";
+                                                        e_reason = Printf.sprintf "drop label %s: from %s signature" label fn_name;
+                                                      }
+                                              | None -> ())
+                                          | None -> ())
+                                      | None -> ())
+                                  | None -> ());
+                                 (* 3. Call sites: [~lbl:e] becomes [e]; punned
+                                    [~lbl] becomes the bare variable [lbl]. *)
+                                 List.iter
+                                   (fun (p, content, cs) ->
+                                      List.iter
+                                        (fun (ca : Source_file.call_arg) ->
+                                           match ca.Source_file.ca_kind with
+                                           | Source_file.Labelled l when l = label ->
+                                               let arg_start = ca.Source_file.ca_loc.Source_file.start_off in
+                                               let arg_end = ca.Source_file.ca_loc.Source_file.end_off in
+                                               let rec find_lbl_start idx =
+                                                 if idx <= 0 then idx
+                                                 else if content.[idx] = '~' || content.[idx] = '?' then idx
+                                                 else find_lbl_start (idx - 1)
+                                               in
+                                               let lbl_start = find_lbl_start (arg_start - 1) in
+                                               if lbl_start >= 0 && content.[lbl_start] = '~' then begin
+                                                 let is_punned =
+                                                   lbl_start + 1 + String.length label = arg_end
+                                                 in
+                                                 if is_punned then
+                                                   add_edit p
+                                                     {
+                                                       Change_plan.e_start_off = lbl_start;
+                                                       e_end_off = arg_end;
+                                                       e_start_line = ca.Source_file.ca_loc.Source_file.start_lnum;
+                                                       e_end_line = ca.Source_file.ca_loc.Source_file.end_lnum;
+                                                       e_replacement = label;
+                                                       e_reason = Printf.sprintf "unlabel call arg ~%s" label;
+                                                     }
+                                                 else
+                                                   add_edit p
+                                                     {
+                                                       Change_plan.e_start_off = lbl_start;
+                                                       e_end_off = arg_start;
+                                                       e_start_line = ca.Source_file.ca_loc.Source_file.start_lnum;
+                                                       e_end_line = ca.Source_file.ca_loc.Source_file.start_lnum;
+                                                       e_replacement = "";
+                                                       e_reason = Printf.sprintf "drop label ~%s: from call" label;
+                                                     }
+                                               end
+                                           | _ -> ())
+                                        cs.Source_file.cs_args)
+                                   sites;
+                                 let description =
+                                   Printf.sprintf "unlabel param ~%s in %s:%s" label file fn_name
+                                 in
+                                 match finish_edit_plan ~ctx ~warnings:!warnings ~description edits_by_file with
+                                 | Error e -> Error e
+                                 | Ok plan ->
+                                     Ok
+                                       {
+                                         plan with
+                                         Change_plan.cp_description =
+                                           Printf.sprintf "%s (%d files edited)" plan.Change_plan.cp_description
+                                             (List.length plan.Change_plan.cp_ops);
+                                       })))
+                | None ->
+                    if
+                      List.exists
+                        (fun (p : Source_file.fn_param) ->
+                           p.Source_file.fp_kind = Source_file.Positional
+                           && p.Source_file.fp_name = label)
+                        fn_def.Source_file.vd_params
+                    then Error (Arg_not_labelled (file, fn_name, label))
+                    else Error (Arg_not_found (file, fn_name, label)))))
+
+(* ---- rename-type --------------------------------------------------------- *)
+
+let plan_rename_type ~(ctx : ctx) ~(file : string) ~(old_name : string) ~(new_name : string) :
+    (Change_plan.t, plan_error) result =
+  let file = Path.normalize file in
+  if not (is_valid_ident new_name) then Error (Invalid_type_name new_name)
+  else if old_name = new_name then Error Src_eq_dst
+  else
+    match Repository.find_file ctx.repo file with
+    | None -> Error (Src_not_found file)
+    | Some _ -> (
+        match ctx.analysis_of file with
+        | None -> Error (Missing_content file)
+        | Some analysis -> (
+            match List.find_opt (fun td -> td.Source_file.td_name = old_name) analysis.Source_file.type_defs with
+            | None -> Error (Type_not_found (file, old_name))
+            | Some target_td ->
+                if List.exists (fun td -> td.Source_file.td_name = new_name) analysis.Source_file.type_defs then
+                  Error (Type_collision (file, new_name))
+                else
+                  let warnings = ref [] in
+                  let warn msg = warnings := !warnings @ [ msg ] in
+                  if
+                    target_td.Source_file.td_constructors <> []
+                    || target_td.Source_file.td_fields <> []
+                  then
+                    warn
+                      (Printf.sprintf
+                         "constructors and fields of %s are not renamed; only the type name is rewritten"
+                         old_name);
+                  let edits_by_file : (string, Change_plan.edit list) Hashtbl.t = Hashtbl.create 16 in
+                  let add_edit p e =
+                    let prev = Option.value ~default:[] (Hashtbl.find_opt edits_by_file p) in
+                    Hashtbl.replace edits_by_file p (e :: prev)
+                  in
+                  (* 1. Rename the declaration in [file]. *)
+                  add_edit file
+                    {
+                      Change_plan.e_start_off = target_td.Source_file.td_loc.Source_file.start_off;
+                      e_end_off = target_td.Source_file.td_loc.Source_file.end_off;
+                      e_start_line = target_td.Source_file.td_loc.Source_file.start_lnum;
+                      e_end_line = target_td.Source_file.td_loc.Source_file.end_lnum;
+                      e_replacement = new_name;
+                      e_reason = Printf.sprintf "rename type %s -> %s" old_name new_name;
+                    };
+                  (* 2. Companion .mli: rename the mirrored declaration. *)
+                  let mli_file = Filename.remove_extension file ^ ".mli" in
+                  let mli_decl_off =
+                    match Repository.find_file ctx.repo mli_file with
+                    | Some _ -> (
+                        match ctx.analysis_of mli_file with
+                        | Some mli_analysis -> (
+                            match List.find_opt (fun td -> td.Source_file.td_name = old_name) mli_analysis.Source_file.type_defs with
+                            | Some td ->
+                                add_edit mli_file
+                                  {
+                                    Change_plan.e_start_off = td.Source_file.td_loc.Source_file.start_off;
+                                    e_end_off = td.Source_file.td_loc.Source_file.end_off;
+                                    e_start_line = td.Source_file.td_loc.Source_file.start_lnum;
+                                    e_end_line = td.Source_file.td_loc.Source_file.end_lnum;
+                                    e_replacement = new_name;
+                                    e_reason = Printf.sprintf "rename type %s -> %s in interface" old_name new_name;
+                                  };
+                                Some td.Source_file.td_loc.Source_file.start_off
+                            | None -> None)
+                        | None -> None)
+                    | None -> None
+                  in
+                  (* 3. Rewrite type references repo-wide: bare uses inside
+                     the declaring pair, and within/cross-scope qualified
+                     uses everywhere else. *)
+                  let forms = Repository.module_forms ctx.repo file in
+                  let sc_dir, within, cross =
+                    match forms with
+                    | Some (sc, w, c) -> (Some sc.Repository.sc_dir, w, c)
+                    | None -> (None, nominal_forms file, nominal_forms file)
+                  in
+                  Repository.ocaml_files ctx.repo
+                  |> List.iter (fun fe ->
+                         let p = fe.Repository.fe_path in
+                         match ctx.analysis_of p, ctx.content_of p with
+                         | Some f_analysis, Some content ->
+                             let f_scope =
+                               match Repository.governing_scope ctx.repo p with
+                               | Some (sc, _) -> Some sc.Repository.sc_dir
+                               | None -> None
+                             in
+                             let is_same_scope = f_scope = sc_dir in
+                             let is_decl_file = p = file in
+                             let is_companion_mli = p = mli_file in
+                             let decl_name_off =
+                               if is_decl_file then Some target_td.Source_file.td_loc.Source_file.start_off
+                               else if is_companion_mli then mli_decl_off
+                               else None
+                             in
+                             let opens_mod =
+                               List.exists
+                                 (fun (r : Source_file.reference) ->
+                                    Source_file.is_open_context r.ref_context
+                                    && r.ref_segments = within)
+                                 f_analysis.Source_file.references
+                             in
+                             List.iter
+                               (fun (r : Source_file.reference) ->
+                                  if r.Source_file.ref_context = Source_file.Ref_type then begin
+                                    let segs = r.Source_file.ref_segments in
+                                    let matched_prefix =
+                                      if
+                                        (is_decl_file || is_companion_mli)
+                                        && segs = [ old_name ]
+                                      then
+                                        if Some r.Source_file.ref_loc.Source_file.start_off = decl_name_off then None
+                                        else Some []
+                                      else if is_same_scope && opens_mod && segs = [ old_name ] then Some []
+                                      else if is_same_scope && segs = within @ [ old_name ] then Some within
+                                      else if segs = cross @ [ old_name ] then Some cross
+                                      else None
+                                    in
+                                    match matched_prefix with
+                                    | None -> ()
+                                    | Some prefix_segs ->
+                                        let new_text = dotted (prefix_segs @ [ new_name ]) in
+                                        let old_text = dotted (prefix_segs @ [ old_name ]) in
+                                        match
+                                          prefix_end_offset content r.Source_file.ref_loc.Source_file.start_off
+                                            (prefix_segs @ [ old_name ])
+                                        with
+                                        | None ->
+                                            warn
+                                              (Printf.sprintf "type reference in %s did not match expected text %s" p old_text)
+                                        | Some end_off ->
+                                            add_edit p
+                                              {
+                                                Change_plan.e_start_off = r.Source_file.ref_loc.Source_file.start_off;
+                                                e_end_off = end_off;
+                                                e_start_line = r.Source_file.ref_loc.Source_file.start_lnum;
+                                                e_end_line = r.Source_file.ref_loc.Source_file.end_lnum;
+                                                e_replacement = new_text;
+                                                e_reason = Printf.sprintf "type use %s -> %s" old_name new_name;
+                                              }
+                                  end)
+                               f_analysis.Source_file.references
+                         | _ -> ());
+                  let description =
+                    Printf.sprintf "rename type %s -> %s in %s" old_name new_name file
+                  in
+                  match finish_edit_plan ~ctx ~warnings:!warnings ~description edits_by_file with
+                  | Error e -> Error e
+                  | Ok plan ->
+                      Ok
+                        {
+                          plan with
+                          Change_plan.cp_description =
+                            Printf.sprintf "%s (%d files edited)" plan.Change_plan.cp_description
+                              (List.length plan.Change_plan.cp_ops);
+                        }))
+
+(* ---- remove-unused-opens --------------------------------------------------- *)
+
+let plan_remove_unused_opens ~(ctx : ctx) ~(file : string) :
+    (Change_plan.t, plan_error) result =
+  let file = Path.normalize file in
+  match Repository.find_file ctx.repo file with
+  | None -> Error (Src_not_found file)
+  | Some _ -> (
+      match ctx.analysis_of file, ctx.content_of file with
+      | None, _ | _, None -> Error (Missing_content file)
+      | Some analysis, Some content -> (
+          let top_opens =
+            List.filter
+              (fun r -> r.Source_file.ref_context = Source_file.Ref_open)
+              analysis.Source_file.references
+          in
+          let local_opens =
+            List.filter
+              (fun r -> r.Source_file.ref_context = Source_file.Ref_local_open)
+              analysis.Source_file.references
+          in
+          if top_opens = [] && local_opens = [] then Error (No_unused_opens file)
+          else
+            let warnings = ref [] in
+            let warn msg = warnings := !warnings @ [ msg ] in
+            let edits_by_file : (string, Change_plan.edit list) Hashtbl.t = Hashtbl.create 16 in
+            let add_edit p e =
+              let prev = Option.value ~default:[] (Hashtbl.find_opt edits_by_file p) in
+              Hashtbl.replace edits_by_file p (e :: prev)
+            in
+            (* The exported surface of an opened module, when determinable.
+               Resolution uses the repo's module forms; a bare [open M] is
+               matched against every module's within/cross forms. *)
+            let exports_of_segs (segs : string list) : string list option =
+              let candidates =
+                Repository.ocaml_files ctx.repo
+                |> List.filter (fun fe -> not (Path.is_mli fe.Repository.fe_path))
+                |> List.filter_map (fun fe ->
+                       match Repository.module_forms ctx.repo fe.Repository.fe_path with
+                       | Some (_, w, c) ->
+                           if segs = w || segs = c then Some fe.Repository.fe_path else None
+                       | None -> None)
+              in
+              match candidates with
+              | [ mpath ] -> (
+                  let mli_path = Filename.remove_extension mpath ^ ".mli" in
+                  let iface_path =
+                    if Repository.find_file ctx.repo mli_path <> None then mli_path else mpath
+                  in
+                  match ctx.analysis_of iface_path with
+                  | None -> None
+                  | Some iface -> (
+                      (* include re-exports make the exported surface
+                         unknowable without type checking; keep such opens. *)
+                      if
+                        List.exists
+                          (fun r -> r.Source_file.ref_context = Source_file.Ref_include)
+                          iface.Source_file.references
+                      then None
+                      else
+                        Some
+                          (((if iface_path = mli_path then iface.Source_file.val_specs else iface.Source_file.value_defs)
+                            |> List.map (fun (vd : Source_file.value_def) -> vd.Source_file.vd_name))
+                           @ List.filter_map
+                               (fun (m : Source_file.module_def) ->
+                                  match String.index_opt m.Source_file.md_name '.' with
+                                  | None -> Some m.Source_file.md_name
+                                  | Some _ -> None)
+                               iface.Source_file.module_defs
+                           @ (List.filter
+                                (fun (td : Source_file.type_def) -> td.Source_file.td_name <> "")
+                                iface.Source_file.type_defs
+                              |> List.map (fun (td : Source_file.type_def) -> td.Source_file.td_name))
+                           @ List.concat_map
+                               (fun (td : Source_file.type_def) ->
+                                  List.map fst td.Source_file.td_constructors
+                                  @ List.map fst td.Source_file.td_fields)
+                               iface.Source_file.type_defs)))
+              | _ -> None
+            in
+            (* An open is used when any identifier it brings into scope is
+               referenced unqualified (or as a submodule path head). Qualified
+               references never depend on an open. *)
+            let used_in_file (exports : string list) : bool =
+              List.exists
+                (fun (r : Source_file.reference) ->
+                   match r.Source_file.ref_context with
+                   | Source_file.Ref_value
+                   | Source_file.Ref_constructor
+                   | Source_file.Ref_pattern
+                   | Source_file.Ref_type
+                   | Source_file.Ref_class
+                   | Source_file.Ref_module_expr -> (
+                       match r.Source_file.ref_segments with
+                       | h :: _ -> List.mem h exports
+                       | [] -> false)
+                   | _ -> false)
+                analysis.Source_file.references
+            in
+            let content_len = String.length content in
+            let try_drop_open (r : Source_file.reference) =
+              let s = r.Source_file.ref_loc.Source_file.start_off in
+              let e = r.Source_file.ref_loc.Source_file.end_off in
+              let rec back i =
+                if i > 0 && (content.[i - 1] = ' ' || content.[i - 1] = '\t') then back (i - 1) else i
+              in
+              let kw_start = back s - 4 in
+              if kw_start >= 0 && String.sub content kw_start 4 = "open" then begin
+                let cut_end = if e < content_len && content.[e] = '\n' then e + 1 else e in
+                add_edit file
+                  {
+                    Change_plan.e_start_off = kw_start;
+                    e_end_off = cut_end;
+                    e_start_line = r.Source_file.ref_loc.Source_file.start_lnum;
+                    e_end_line = r.Source_file.ref_loc.Source_file.end_lnum;
+                    e_replacement = "";
+                    e_reason = Printf.sprintf "drop unused open %s" (dotted r.Source_file.ref_segments);
+                  }
+              end
+              else
+                warn
+                  (Printf.sprintf "could not locate the 'open' keyword before %s in %s; skipped"
+                     (dotted r.Source_file.ref_segments) file)
+            in
+            List.iter
+              (fun (r : Source_file.reference) ->
+                 let name = dotted r.Source_file.ref_segments in
+                 match exports_of_segs r.Source_file.ref_segments with
+                 | None -> warn (Printf.sprintf "cannot determine what %s exports; open kept" name)
+                 | Some exports -> if not (used_in_file exports) then try_drop_open r)
+              top_opens;
+            List.iter
+              (fun (r : Source_file.reference) ->
+                 match exports_of_segs r.Source_file.ref_segments with
+                 | Some exports when not (used_in_file exports) ->
+                     warn
+                       (Printf.sprintf "local open %s appears unused; only statement-level opens are removed"
+                          (dotted r.Source_file.ref_segments))
+                 | _ -> ())
+              local_opens;
+            if Hashtbl.length edits_by_file = 0 then Error (No_unused_opens file)
+            else
+              let edit_count =
+                Hashtbl.fold (fun _ es acc -> acc + List.length es) edits_by_file 0
+              in
+              finish_edit_plan ~ctx ~warnings:!warnings
+                ~description:(Printf.sprintf "remove %d unused open%s in %s" edit_count
+                    (if edit_count = 1 then "" else "s") file)
+                edits_by_file))

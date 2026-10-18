@@ -38,6 +38,7 @@ let emit_error_json ~(command : string) (message : string) : unit =
 
 let ctx_name : Source_file.ref_context -> string = function
   | Source_file.Ref_open -> "open"
+  | Source_file.Ref_local_open -> "local-open"
   | Source_file.Ref_include -> "include"
   | Source_file.Ref_module_expr -> "module"
   | Source_file.Ref_value -> "value"
@@ -637,6 +638,48 @@ let run_plan_extract_constant ~rt ~json root file literal const_name =
   | Ok (plan, path) ->
       emit_plan_created ~command:"plan extract-constant" ~json plan path
 
+let run_plan_unlabel_arg ~rt ~json root file fn_name label =
+  if file = "" || fn_name = "" || label = "" then begin
+    let msg = "missing required arguments: FILE FN LABEL" in
+    if json then (emit_error_json ~command:"plan unlabel-arg" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_unlabel_arg ~rt ~config ~root ~file ~fn_name ~label () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan unlabel-arg" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan unlabel-arg" ~json plan path
+
+let run_plan_rename_type ~rt ~json root file old_name new_name =
+  if file = "" || old_name = "" || new_name = "" then begin
+    let msg = "missing required arguments: FILE OLD_TYPE NEW_TYPE" in
+    if json then (emit_error_json ~command:"plan rename-type" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_rename_type ~rt ~config ~root ~file ~old_name ~new_name () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan rename-type" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan rename-type" ~json plan path
+
+let run_plan_remove_unused_opens ~rt ~json root file =
+  if file = "" then begin
+    let msg = "missing required argument: FILE" in
+    if json then (emit_error_json ~command:"plan remove-unused-opens" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_remove_unused_opens ~rt ~config ~root ~file () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan remove-unused-opens" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan remove-unused-opens" ~json plan path
+
 let load_plan_or_exit ~rt ~json ~root ~command ref =
   let module St = (val rt.Reforge_ports.Runtime.store) in
   let store_t = St.create ~root in
@@ -1051,6 +1094,31 @@ let run ~rt ~argv () : int =
        and+ const = Arg.(value & pos 2 string "" & info [] ~docv:"CONST_NAME" ~doc:"Name for the new constant.") in
        run_plan_extract_constant ~rt ~json:j r file literal const)
   in
+  let plan_unlabel_arg_cmd =
+    mk "unlabel-arg" "Plan converting a labeled parameter (~label) back to positional."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"File containing the function definition.")
+       and+ fn = Arg.(value & pos 1 string "" & info [] ~docv:"FN" ~doc:"Function name.")
+       and+ label = Arg.(value & pos 2 string "" & info [] ~docv:"LABEL" ~doc:"Label of the parameter (~label) to make positional.") in
+       run_plan_unlabel_arg ~rt ~json:j r file fn label)
+  in
+  let plan_rename_type_cmd =
+    mk "rename-type" "Plan renaming a type across declarations, annotations and interfaces."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"File declaring the type.")
+       and+ old_name = Arg.(value & pos 1 string "" & info [] ~docv:"OLD_TYPE" ~doc:"Current name of the type.")
+       and+ new_name = Arg.(value & pos 2 string "" & info [] ~docv:"NEW_TYPE" ~doc:"New name of the type.") in
+       run_plan_rename_type ~rt ~json:j r file old_name new_name)
+  in
+  let plan_remove_unused_opens_cmd =
+    mk "remove-unused-opens" "Plan removing statement-level opens whose module is never used unqualified."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"File to clean up.") in
+       run_plan_remove_unused_opens ~rt ~json:j r file)
+  in
   let plan_cmd =
     Cmd.group (Cmd.info "plan" ~doc:"Create change plans.")
       [
@@ -1060,7 +1128,10 @@ let run ~rt ~argv () : int =
         plan_rename_arg_cmd;
         plan_remove_arg_cmd;
         plan_label_arg_cmd;
+        plan_unlabel_arg_cmd;
         plan_extract_constant_cmd;
+        plan_rename_type_cmd;
+        plan_remove_unused_opens_cmd;
       ]
   in
   let preview_cmd =

@@ -26,7 +26,8 @@ type module_def = {
 }
 
 type ref_context =
-  | Ref_open
+  | Ref_open          (** statement-level [open M] *)
+  | Ref_local_open    (** local open: [let open M in ...] *)
   | Ref_include
   | Ref_module_expr
   | Ref_value
@@ -72,6 +73,23 @@ type value_def = {
   vd_body_loc : loc option;
 }
 
+type type_def_kind =
+  | Type_abstract
+  | Type_variant
+  | Type_record
+  | Type_open
+
+(** A type declaration, type extension or exception. [td_name] is possibly
+    dotted for types declared inside submodules; exceptions carry an empty
+    name since they only contribute constructor names. *)
+type type_def = {
+  td_name : string;
+  td_loc : loc;
+  td_kind : type_def_kind;
+  td_constructors : (string * loc) list;
+  td_fields : (string * loc) list;
+}
+
 type literal_kind =
   | Lit_string of string
   | Lit_int of string
@@ -89,6 +107,7 @@ type analysis = {
   module_defs : module_def list;
   value_defs : value_def list;
   val_specs : value_def list;
+  type_defs : type_def list;
   references : reference list;
   call_sites : call_site list;
   literals : literal_occurrence list;
@@ -96,6 +115,9 @@ type analysis = {
 
 val head_of_reference : reference -> string option
 val is_module_reference : reference -> bool
+val is_open_context : ref_context -> bool
+(** Either flavor of [open] (statement-level or local) brings the module's
+    contents into scope. *)
 (** Can this reference denote a module dependency? Module-position references
     (open/include/module expressions) always can; qualified identifiers can
     when their head is capitalized. *)

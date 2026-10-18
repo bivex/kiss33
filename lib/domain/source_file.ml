@@ -48,7 +48,8 @@ type module_def = {
 }
 
 type ref_context =
-  | Ref_open          (* open M *)
+  | Ref_open          (* statement-level open M *)
+  | Ref_local_open    (* local open: let open M in ... *)
   | Ref_include       (* include M *)
   | Ref_module_expr   (* module X = M, functor arguments, module types *)
   | Ref_value         (* M.f in an expression or record field *)
@@ -94,6 +95,25 @@ type value_def = {
   vd_body_loc : loc option;
 }
 
+type type_def_kind =
+  | Type_abstract
+  | Type_variant
+  | Type_record
+  | Type_open
+
+(* A type declaration (or type extension / exception). [td_name] is possibly
+   dotted for types declared inside submodules; exceptions are recorded with
+   an empty name since they only contribute constructor names. Constructors
+   and fields are kept with their own locations so renames can target them
+   individually. *)
+type type_def = {
+  td_name : string;
+  td_loc : loc;
+  td_kind : type_def_kind;
+  td_constructors : (string * loc) list;
+  td_fields : (string * loc) list;
+}
+
 type literal_kind =
   | Lit_string of string
   | Lit_int of string
@@ -111,6 +131,7 @@ type analysis = {
   module_defs : module_def list;
   value_defs : value_def list;
   val_specs : value_def list;
+  type_defs : type_def list;
   references : reference list;
   call_sites : call_site list;
   literals : literal_occurrence list;
@@ -124,9 +145,14 @@ let head_of_reference (r : reference) : string option =
    is a qualified path whose head is a capitalized module name. *)
 let is_module_reference (r : reference) : bool =
   match (r.ref_context, r.ref_segments) with
-  | (Ref_open | Ref_include | Ref_module_expr), _ :: _ -> true
+  | (Ref_open | Ref_local_open | Ref_include | Ref_module_expr), _ :: _ -> true
   | _, h :: _ :: _ -> h <> "" && String.capitalize_ascii h = h
   | _ -> false
+
+(* Either flavor of [open] brings the module's contents into scope, so name
+   lookups that reason about opens must accept both. *)
+let is_open_context (c : ref_context) : bool =
+  match c with Ref_open | Ref_local_open -> true | _ -> false
 
 let empty_analysis = {
   parse_ok = true;
@@ -134,6 +160,7 @@ let empty_analysis = {
   module_defs = [];
   value_defs = [];
   val_specs = [];
+  type_defs = [];
   references = [];
   call_sites = [];
   literals = [];
@@ -145,6 +172,7 @@ let failed_analysis (msg : string) : analysis = {
   module_defs = [];
   value_defs = [];
   val_specs = [];
+  type_defs = [];
   references = [];
   call_sites = [];
   literals = [];

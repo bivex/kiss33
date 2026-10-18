@@ -37,6 +37,7 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
   let defs : Source_file.module_def list ref = ref [] in
   let value_defs : Source_file.value_def list ref = ref [] in
   let val_specs : Source_file.value_def list ref = ref [] in
+  let type_defs : Source_file.type_def list ref = ref [] in
   let refs : Source_file.reference list ref = ref [] in
   let prefix : string list ref = ref [] in
   let push_def name loc kind =
@@ -47,6 +48,49 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
         md_kind = kind;
       }
       :: !defs
+  in
+  let ctor_locs (cs : Parsetree.constructor_declaration list) : (string * Source_file.loc) list =
+    List.map
+      (fun c -> (c.Parsetree.pcd_name.Asttypes.txt, loc_of c.Parsetree.pcd_name.Asttypes.loc))
+      cs
+  in
+  let field_locs (fs : Parsetree.label_declaration list) : (string * Source_file.loc) list =
+    List.map
+      (fun f -> (f.Parsetree.pld_name.Asttypes.txt, loc_of f.Parsetree.pld_name.Asttypes.loc))
+      fs
+  in
+  let push_type_decl (td : Parsetree.type_declaration) =
+    let name = td.Parsetree.ptype_name.Asttypes.txt in
+    let kind, ctors, fields =
+      match (td.Parsetree.ptype_kind : Parsetree.type_kind) with
+      | Ptype_abstract -> (Source_file.Type_abstract, [], [])
+      | Ptype_variant cs -> (Source_file.Type_variant, ctor_locs cs, [])
+      | Ptype_record fs -> (Source_file.Type_record, [], field_locs fs)
+      | Ptype_open -> (Source_file.Type_open, [], [])
+    in
+    type_defs :=
+      {
+        Source_file.td_name = String.concat "." (!prefix @ [ name ]);
+        td_loc = loc_of td.Parsetree.ptype_name.Asttypes.loc;
+        td_kind = kind;
+        td_constructors = ctors;
+        td_fields = fields;
+      }
+      :: !type_defs
+  in
+  (* Type extensions and exceptions contribute constructor names without
+     declaring a fresh type name of their own; see push_typext below. *)
+  let push_exn (c : Parsetree.extension_constructor) =
+    let name, nloc = (c.Parsetree.pext_name.Asttypes.txt, loc_of c.Parsetree.pext_name.Asttypes.loc) in
+    type_defs :=
+      {
+        Source_file.td_name = "";
+        td_loc = nloc;
+        td_kind = Source_file.Type_variant;
+        td_constructors = [ (name, nloc) ];
+        td_fields = [];
+      }
+      :: !type_defs
   in
   let call_sites = ref [] in
   let literals = ref [] in
@@ -89,6 +133,26 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
   let push_lident (lid : Longident.t Asttypes.loc) ctx =
     if not lid.loc.Location.loc_ghost then
       push_ref (flatten_lident lid.Asttypes.txt) (loc_of lid.Asttypes.loc) ctx
+  in
+  (* Type extensions reference the type they extend and contribute their
+     constructors to the file's exported surface. *)
+  let push_typext (path : Longident.t Asttypes.loc)
+      (cs : Parsetree.extension_constructor list) =
+    let ext_ctors =
+      List.map
+        (fun c -> (c.Parsetree.pext_name.Asttypes.txt, loc_of c.Parsetree.pext_name.Asttypes.loc))
+        cs
+    in
+    push_lident path Source_file.Ref_type;
+    type_defs :=
+      {
+        Source_file.td_name = String.concat "." (flatten_lident path.Asttypes.txt);
+        td_loc = loc_of path.Asttypes.loc;
+        td_kind = Source_file.Type_variant;
+        td_constructors = ext_ctors;
+        td_fields = [];
+      }
+      :: !type_defs
   in
   let rec extract_params_and_body expr =
     match (expr.Parsetree.pexp_desc : Parsetree.expression_desc) with
@@ -184,6 +248,15 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
                match (od.Parsetree.popen_expr.Parsetree.pmod_desc : Parsetree.module_expr_desc) with
                | Pmod_ident lid -> push_lident lid Source_file.Ref_open
                | _ -> it.module_expr it od.Parsetree.popen_expr)
+           | Pstr_type (_, tds) ->
+               List.iter push_type_decl tds;
+               default.structure_item it item
+           | Pstr_typext te ->
+               push_typext te.Parsetree.ptyext_path te.Parsetree.ptyext_constructors;
+               default.structure_item it item
+           | Pstr_exception ext ->
+               push_exn ext.Parsetree.ptyexn_constructor;
+               default.structure_item it item
            | Pstr_include incl -> (
                match (incl.Parsetree.pincl_mod.Parsetree.pmod_desc : Parsetree.module_expr_desc) with
                | Pmod_ident lid -> push_lident lid Source_file.Ref_include
@@ -240,6 +313,15 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
                | Some mty -> it.module_type it mty)
            | Psig_open od ->
                push_lident od.Parsetree.popen_expr Source_file.Ref_open
+           | Psig_type (_, tds) ->
+               List.iter push_type_decl tds;
+               default.signature_item it item
+           | Psig_typext te ->
+               push_typext te.Parsetree.ptyext_path te.Parsetree.ptyext_constructors;
+               default.signature_item it item
+           | Psig_exception ext ->
+               push_exn ext.Parsetree.ptyexn_constructor;
+               default.signature_item it item
            | Psig_include incl -> (
                match (incl.Parsetree.pincl_mod.Parsetree.pmty_desc : Parsetree.module_type_desc) with
                | Pmty_ident lid -> push_lident lid Source_file.Ref_include
@@ -294,7 +376,7 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
            | Pexp_new lid -> push_lident lid Source_file.Ref_class
            | Pexp_open (od, body) -> (
                (match (od.Parsetree.popen_expr.Parsetree.pmod_desc : Parsetree.module_expr_desc) with
-                | Pmod_ident lid -> push_lident lid Source_file.Ref_open
+                | Pmod_ident lid -> push_lident lid Source_file.Ref_local_open
                 | _ -> it.module_expr it od.Parsetree.popen_expr);
                it.expr it body)
            | Pexp_record (fields, _) ->
@@ -369,6 +451,7 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
        module_defs = List.rev !defs;
        value_defs = List.rev !value_defs;
        val_specs = List.rev !val_specs;
+       type_defs = List.rev !type_defs;
        references = List.rev !refs;
        call_sites = List.rev !call_sites;
        literals = List.rev !literals;

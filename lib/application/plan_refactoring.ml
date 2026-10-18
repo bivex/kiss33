@@ -158,6 +158,52 @@ let plan_extract_constant ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~
       | Error e -> Error e
       | Ok path -> Ok (plan, path))
 
+let plan_unlabel_arg ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
+    ~file ~fn_name ~label () : (Change_plan.t * string, string) result =
+  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let store_t = St.create ~root in
+  let id = St.next_plan_id store_t in
+  let command =
+    Printf.sprintf "reforge plan unlabel-arg %s %s %s" file fn_name label
+  in
+  let* ctx = make_ctx ~rt ~config ~root ~id ~command in
+  match Refactoring.plan_unlabel_arg ~ctx ~file ~fn_name ~label with
+  | Error e -> Error (Refactoring.pe_message e)
+  | Ok plan -> (
+      match St.save_plan store_t plan with
+      | Error e -> Error e
+      | Ok path -> Ok (plan, path))
+
+let plan_rename_type ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
+    ~file ~old_name ~new_name () : (Change_plan.t * string, string) result =
+  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let store_t = St.create ~root in
+  let id = St.next_plan_id store_t in
+  let command =
+    Printf.sprintf "reforge plan rename-type %s %s %s" file old_name new_name
+  in
+  let* ctx = make_ctx ~rt ~config ~root ~id ~command in
+  match Refactoring.plan_rename_type ~ctx ~file ~old_name ~new_name with
+  | Error e -> Error (Refactoring.pe_message e)
+  | Ok plan -> (
+      match St.save_plan store_t plan with
+      | Error e -> Error e
+      | Ok path -> Ok (plan, path))
+
+let plan_remove_unused_opens ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
+    ~file () : (Change_plan.t * string, string) result =
+  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let store_t = St.create ~root in
+  let id = St.next_plan_id store_t in
+  let command = Printf.sprintf "reforge plan remove-unused-opens %s" file in
+  let* ctx = make_ctx ~rt ~config ~root ~id ~command in
+  match Refactoring.plan_remove_unused_opens ~ctx ~file with
+  | Error e -> Error (Refactoring.pe_message e)
+  | Ok plan -> (
+      match St.save_plan store_t plan with
+      | Error e -> Error e
+      | Ok path -> Ok (plan, path))
+
 (* All plans with their derived status. *)
 let list_status ~(rt : Reforge_ports.Runtime.t) ~root () :
     ((Change_plan.t * Change_plan.status) list, string) result =

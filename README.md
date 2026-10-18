@@ -127,7 +127,10 @@ reforge [COMMAND] [OPTIONS]
 | `reforge plan rename-arg <FILE> <FN> <OLD> <NEW>` | Plan renaming a function argument (positional, labeled `~x`, or optional `?x`) across definition, body usages, `.mli`, and call sites. |
 | `reforge plan remove-arg <FILE> <FN> <ARG>` | Plan removing an unused argument from definition, `.mli` signature, and call sites (rejects if used in body). |
 | `reforge plan label-arg <FILE> <FN> <ARG> <LABEL>` | Plan converting a positional parameter to labeled `~label` with `.mli` and call site rewrites. |
+| `reforge plan unlabel-arg <FILE> <FN> <LABEL>` | Plan converting a labeled `~label` parameter back to positional; rejects optional `?x` and out-of-order call sites. |
 | `reforge plan extract-constant <FILE> <LIT> <NAME>` | Plan extracting repeated magic literal strings/numbers into a top-level constant. |
+| `reforge plan rename-type <FILE> <OLD> <NEW>` | Plan renaming a type across declarations, type annotations, and `.mli` interfaces repo-wide. |
+| `reforge plan remove-unused-opens <FILE>` | Plan dropping `open` directives whose module is never used unqualified in the file. |
 | `reforge preview [PLAN]` | Show byte-precise unified diffs and operations of a plan (defaults to latest). |
 | `reforge diff [--plan=PLAN]` | Show unified diffs for a plan or applied changes. |
 | `reforge apply [PLAN]` | Execute the plan transactionally with automatic backups. |
@@ -312,6 +315,42 @@ created .reforge/plans/plan-0007.json
     edit  lib/util.ml (3 edits)
 
 $ reforge preview
+$ reforge apply
+$ reforge validate
+```
+
+### 9. Rename a Domain Type
+
+Rename a type across its declaration, every type annotation, and the `.mli` interface:
+
+```bash
+$ reforge plan rename-type lib/util.ml token lexeme
+created .reforge/plans/plan-0008.json
+  rename type token -> lexeme in lib/util.ml (3 files edited)
+  operations:
+    edit  bin/main.ml (1 edits)
+    edit  lib/util.ml (2 edits)
+    edit  lib/util.mli (2 edits)
+  warning: constructors and fields of token are not renamed; only the type name is rewritten
+
+$ reforge preview
+$ reforge apply
+```
+
+### 10. Hygiene: Drop Unused Opens
+
+Remove `open` directives that bring nothing into scope. Exports of the opened module are
+resolved from its `.mli` (or `.ml`); opens whose exports cannot be determined — external
+libraries, re-exports through `include` — are kept with a warning:
+
+```bash
+$ reforge plan remove-unused-opens lib/util.ml
+created .reforge/plans/plan-0009.json
+  remove 1 unused open in lib/util.ml
+  operations:
+    edit  lib/util.ml (1 edits)
+
+$ reforge preview   # verifies only the unused open disappears
 $ reforge apply
 $ reforge validate
 ```
