@@ -8,16 +8,21 @@ let exit_stale_code = 3
 let exit_violations_code = 4
 let exit_undo_refused_code = 5
 
+let key_command = "command"
+let key_status = "status"
+let key_path = "path"
+let key_op = "op"
+
 let emit_json ~(command : string) (data : Yojson.Basic.t) : unit =
   let envelope =
-    `Assoc [ ("command", `String command); ("status", `String "ok"); ("data", data) ]
+    `Assoc [ (key_command, `String command); (key_status, `String "ok"); ("data", data) ]
   in
   print_string (Yojson.Basic.to_string envelope);
   print_newline ()
 
 let emit_error_json ~(command : string) (message : string) : unit =
   let envelope =
-    `Assoc [ ("command", `String command); ("status", `String "error"); ("error", `String message) ]
+    `Assoc [ (key_command, `String command); (key_status, `String "error"); ("error", `String message) ]
   in
   print_string (Yojson.Basic.to_string envelope);
   print_newline ()
@@ -63,80 +68,85 @@ let status_str = function
   | Change_plan.Failed -> "failed"
   | Change_plan.Undone -> "undone"
 
+let op_json = function
+  | Change_plan.Op_create_dir { path } ->
+      `Assoc [ (key_op, `String "create_dir"); (key_path, `String path) ]
+  | Change_plan.Op_move_file { src; dst; _ } ->
+      `Assoc
+        [ (key_op, `String "move_file"); ("src", `String src);
+          ("dst", `String dst) ]
+  | Change_plan.Op_edit_file { path; edits; _ } ->
+      `Assoc
+        [ (key_op, `String "edit_file"); (key_path, `String path);
+          ("edits", `Int (List.length edits)) ]
+  | Change_plan.Op_write_file { path; _ } ->
+      `Assoc [ (key_op, `String "write_file"); (key_path, `String path) ]
+
 let plan_json (p : Change_plan.t) : Yojson.Basic.t =
   `Assoc
     [
       ("id", `String p.Change_plan.cp_id);
       ("created_at", `String p.Change_plan.cp_created_at);
       ("description", `String p.Change_plan.cp_description);
-      ("command", `String p.Change_plan.cp_command);
-      ( "operations",
-        `List
-          (List.map
-             (function
-               | Change_plan.Op_create_dir { path } ->
-                   `Assoc [ ("op", `String "create_dir"); ("path", `String path) ]
-               | Change_plan.Op_move_file { src; dst; _ } ->
-                   `Assoc
-                     [ ("op", `String "move_file"); ("src", `String src);
-                       ("dst", `String dst) ]
-               | Change_plan.Op_edit_file { path; edits; _ } ->
-                   `Assoc
-                     [ ("op", `String "edit_file"); ("path", `String path);
-                       ("edits", `Int (List.length edits)) ]
-               | Change_plan.Op_write_file { path; _ } ->
-                   `Assoc [ ("op", `String "write_file"); ("path", `String path) ])
-             p.Change_plan.cp_ops) );
+      (key_command, `String p.Change_plan.cp_command);
+      ("operations", `List (List.map op_json p.Change_plan.cp_ops));
       ("warnings", `List (List.map (fun w -> `String w) p.Change_plan.cp_warnings));
     ]
+
+let print_plan_op = function
+  | Change_plan.Op_create_dir { path } -> Printf.printf "    mkdir %s\n" path
+  | Change_plan.Op_move_file { src; dst; _ } ->
+      Printf.printf "    move  %s -> %s\n" src dst
+  | Change_plan.Op_edit_file { path; edits; _ } ->
+      Printf.printf "    edit  %s (%d edits)\n" path (List.length edits)
+  | Change_plan.Op_write_file { path; _ } ->
+      Printf.printf "    write %s\n" path
+
+let print_plan_text plan path =
+  Printf.printf "created %s\n" path;
+  Printf.printf "  %s\n" plan.Change_plan.cp_description;
+  Printf.printf "  operations:\n";
+  List.iter print_plan_op plan.Change_plan.cp_ops;
+  List.iter (fun w -> Printf.printf "  warning: %s\n" w) plan.Change_plan.cp_warnings;
+  Printf.printf "next: reforge preview %s\n" path
 
 let emit_plan_created ~command ~json plan path =
   if json then
     emit_json ~command
-      (`Assoc [ ("plan", plan_json plan); ("path", `String path) ])
-  else begin
-    Printf.printf "created %s\n" path;
-    Printf.printf "  %s\n" plan.Change_plan.cp_description;
-    Printf.printf "  operations:\n";
-    List.iter
-      (function
-        | Change_plan.Op_create_dir { path } -> Printf.printf "    mkdir %s\n" path
-        | Change_plan.Op_move_file { src; dst; _ } ->
-            Printf.printf "    move  %s -> %s\n" src dst
-        | Change_plan.Op_edit_file { path; edits; _ } ->
-            Printf.printf "    edit  %s (%d edits)\n" path (List.length edits)
-        | Change_plan.Op_write_file { path; _ } ->
-            Printf.printf "    write %s\n" path)
-      plan.Change_plan.cp_ops;
-    List.iter (fun w -> Printf.printf "  warning: %s\n" w) plan.Change_plan.cp_warnings;
-    Printf.printf "next: reforge preview %s\n" path
-  end;
+      (`Assoc [ ("plan", plan_json plan); (key_path, `String path) ])
+  else
+    print_plan_text plan path;
   0
+
+let fail_exit ~json ~command message =
+  if json then emit_error_json ~command message
+  else prerr_endline ("error: " ^ message);
+  exit exit_usage_code
+
+let resolve_plan_id (type a)
+    (module St : Reforge_ports.Change_store.S with type t = a) store_t ref =
+  if ref <> "" then Ok ref
+  else
+    match St.all_plans store_t with
+    | Error e -> Error e
+    | Ok [] -> Error "no plans found in repository"
+    | Ok plans -> (
+        match List.rev plans with
+        | latest :: _ -> Ok latest.Change_plan.cp_id
+        | [] -> Error "no plans found in repository")
+
+let load_plan_by_id (type a)
+    (module St : Reforge_ports.Change_store.S with type t = a) store_t ~json ~command plan_id =
+  match St.load_plan store_t plan_id with
+  | Ok plan -> plan
+  | Error e -> fail_exit ~json ~command e
 
 let load_plan_or_exit ~rt ~json ~root ~command ref =
   let module St = (val rt.Reforge_ports.Runtime.store) in
   let store_t = St.create ~root in
-  let ref_res =
-    if ref <> "" then Ok ref
-    else
-      match St.all_plans store_t with
-      | Error e -> Error e
-      | Ok [] -> Error "no plans found in repository"
-      | Ok plans -> (
-          match List.rev plans with
-          | latest :: _ -> Ok latest.Change_plan.cp_id
-          | [] -> Error "no plans found in repository")
-  in
-  match ref_res with
-  | Error e ->
-      if json then (emit_error_json ~command e; exit exit_usage_code)
-      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-  | Ok r -> (
-      match St.load_plan store_t r with
-      | Error e ->
-          if json then (emit_error_json ~command e; exit exit_usage_code)
-          else (prerr_endline ("error: " ^ e); exit exit_usage_code)
-      | Ok plan -> plan)
+  match resolve_plan_id (module St) store_t ref with
+  | Error e -> fail_exit ~json ~command e
+  | Ok plan_id -> load_plan_by_id (module St) store_t ~json ~command plan_id
 
 let with_fs_read ~rt ~root path =
   let module Fs = (val rt.Reforge_ports.Runtime.filesystem) in
