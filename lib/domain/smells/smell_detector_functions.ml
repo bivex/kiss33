@@ -230,7 +230,9 @@ let detect_function_smells ~(file : string) ~(content : string)
         let s = p.Source_file.fp_full_loc.Source_file.start_off in
         let e = min (String.length content) p.Source_file.fp_full_loc.Source_file.end_off in
         if e > s && s < String.length content then
-          Refactoring_helpers.str_contains (String.sub content s (e - s)) "bool"
+          let txt = String.sub content s (e - s) in
+          not (Refactoring_helpers.str_contains txt "->")
+          && Refactoring_helpers.str_contains txt "bool"
         else false
       in
       if is_bool_name || is_bool_annot then
