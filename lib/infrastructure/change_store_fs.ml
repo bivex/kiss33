@@ -10,6 +10,18 @@ open Reforge_domain
 module Change_store_fs : Reforge_ports.Change_store.S = struct
   type t = { root : string }
 
+  let ext_json = ".json"
+  let plan_prefix = "plan-"
+  let plan_prefix_len = 5
+
+  let key_op = "op"
+  let key_path = "path"
+  let key_src = "src"
+  let key_dst = "dst"
+  let key_hash = "hash"
+  let key_edits = "edits"
+  let key_content = "content"
+
   let reforge_dir t = Filename.concat t.root ".reforge"
   let plans_dir t = Filename.concat (reforge_dir t) "plans"
   let applied_dir t = Filename.concat (reforge_dir t) "applied"
@@ -21,8 +33,8 @@ module Change_store_fs : Reforge_ports.Change_store.S = struct
   let create ~root = { root = to_abs root }
 
   let plan_path t id =
-    if String.contains id '/' || Filename.check_suffix id ".json" then to_abs id
-    else Filename.concat (plans_dir t) (id ^ ".json")
+    if String.contains id '/' || Filename.check_suffix id ext_json then to_abs id
+    else Filename.concat (plans_dir t) (id ^ ext_json)
 
   let ensure_dirs t =
     let rec mkdir p =
@@ -76,37 +88,37 @@ module Change_store_fs : Reforge_ports.Change_store.S = struct
 
   let json_of_op = function
     | Change_plan.Op_create_dir { path } ->
-        `Assoc [ ("op", `String "create_dir"); ("path", `String path) ]
+        `Assoc [ (key_op, `String "create_dir"); (key_path, `String path) ]
     | Change_plan.Op_move_file { src; dst; hash } ->
         `Assoc
-          [ ("op", `String "move_file"); ("src", `String src); ("dst", `String dst);
-            ("hash", `String hash) ]
+          [ (key_op, `String "move_file"); (key_src, `String src); (key_dst, `String dst);
+            (key_hash, `String hash) ]
     | Change_plan.Op_edit_file { path; edits; original_hash; result_hash } ->
         `Assoc
-          [ ("op", `String "edit_file"); ("path", `String path);
-            ("edits", `List (List.map json_of_edit edits));
+          [ (key_op, `String "edit_file"); (key_path, `String path);
+            (key_edits, `List (List.map json_of_edit edits));
             ("original_hash", `String original_hash);
             ("result_hash", `String result_hash) ]
     | Change_plan.Op_write_file { path; content; hash } ->
         `Assoc
-          [ ("op", `String "write_file"); ("path", `String path);
-            ("content", `String content); ("hash", `String hash) ]
+          [ (key_op, `String "write_file"); (key_path, `String path);
+            (key_content, `String content); (key_hash, `String hash) ]
 
   let op_of_json (j : Yojson.Basic.t) : (Change_plan.op, string) result =
     try
-      match j |> member "op" |> to_string with
-      | "create_dir" -> Ok (Change_plan.Op_create_dir { path = j |> member "path" |> to_string })
+      match j |> member key_op |> to_string with
+      | "create_dir" -> Ok (Change_plan.Op_create_dir { path = j |> member key_path |> to_string })
       | "move_file" ->
           Ok
             (Change_plan.Op_move_file
                {
-                 src = j |> member "src" |> to_string;
-                 dst = j |> member "dst" |> to_string;
-                 hash = j |> member "hash" |> to_string;
+                 src = j |> member key_src |> to_string;
+                 dst = j |> member key_dst |> to_string;
+                 hash = j |> member key_hash |> to_string;
                })
       | "edit_file" -> (
           let edits =
-            j |> member "edits" |> to_list |> List.map edit_of_json
+            j |> member key_edits |> to_list |> List.map edit_of_json
           in
           match List.find_map (function Ok _ -> None | Error e -> Some e) edits with
           | Some e -> Error e
@@ -114,7 +126,7 @@ module Change_store_fs : Reforge_ports.Change_store.S = struct
               Ok
                 (Change_plan.Op_edit_file
                    {
-                     path = j |> member "path" |> to_string;
+                     path = j |> member key_path |> to_string;
                      edits = List.map (function Ok e -> e | Error _ -> assert false) edits;
                      original_hash = j |> member "original_hash" |> to_string;
                      result_hash = j |> member "result_hash" |> to_string;
@@ -123,27 +135,27 @@ module Change_store_fs : Reforge_ports.Change_store.S = struct
           Ok
             (Change_plan.Op_write_file
                {
-                 path = j |> member "path" |> to_string;
-                 content = j |> member "content" |> to_string;
-                 hash = j |> member "hash" |> to_string;
+                 path = j |> member key_path |> to_string;
+                 content = j |> member key_content |> to_string;
+                 hash = j |> member key_hash |> to_string;
                })
       | op -> Error ("unknown operation kind: " ^ op)
     with Type_error (msg, _) -> Error ("operation field: " ^ msg)
 
   let json_of_precondition = function
     | Change_plan.Pre_exists { path; hash } ->
-        `Assoc [ ("exists", `Assoc [ ("path", `String path); ("hash", `String hash) ]) ]
+        `Assoc [ ("exists", `Assoc [ (key_path, `String path); (key_hash, `String hash) ]) ]
     | Change_plan.Pre_absent { path } ->
-        `Assoc [ ("absent", `Assoc [ ("path", `String path) ]) ]
+        `Assoc [ ("absent", `Assoc [ (key_path, `String path) ]) ]
 
   let precondition_of_json (j : Yojson.Basic.t) : (Change_plan.precondition, string) result =
     try
       match j with
       | `Assoc [ ("exists", `Assoc fields) ] ->
           let get k = List.assoc k fields |> to_string in
-          Ok (Change_plan.Pre_exists { path = get "path"; hash = get "hash" })
+          Ok (Change_plan.Pre_exists { path = get key_path; hash = get key_hash })
       | `Assoc [ ("absent", `Assoc fields) ] ->
-          Ok (Change_plan.Pre_absent { path = List.assoc "path" fields |> to_string })
+          Ok (Change_plan.Pre_absent { path = List.assoc key_path fields |> to_string })
       | _ -> Error "malformed precondition"
     with
     | Type_error (msg, _) -> Error ("precondition field: " ^ msg)
@@ -212,7 +224,7 @@ module Change_store_fs : Reforge_ports.Change_store.S = struct
             (List.map
                (fun (p, pre, post) ->
                   `Assoc
-                    [ ("path", `String p); ("pre_hash", `String pre);
+                    [ (key_path, `String p); ("pre_hash", `String pre);
                       ("post_hash", `String post) ])
                a.Change_plan.ap_edited) );
         ("written", `List (List.map (fun p -> `String p) a.Change_plan.ap_written));
@@ -220,7 +232,7 @@ module Change_store_fs : Reforge_ports.Change_store.S = struct
           `List
             (List.map
                (fun (s, d, h) ->
-                  `Assoc [ ("src", `String s); ("dst", `String d); ("hash", `String h) ])
+                  `Assoc [ (key_src, `String s); (key_dst, `String d); (key_hash, `String h) ])
                a.Change_plan.ap_moved) );
         ("created_dirs", `List (List.map (fun d -> `String d) a.Change_plan.ap_created_dirs));
         ( "undone_at",
@@ -239,16 +251,16 @@ module Change_store_fs : Reforge_ports.Change_store.S = struct
           ap_edited =
             j |> member "edited" |> to_list
             |> List.map (fun e ->
-                   ( e |> member "path" |> to_string,
+                   ( e |> member key_path |> to_string,
                      e |> member "pre_hash" |> to_string,
                      e |> member "post_hash" |> to_string ));
           ap_written = j |> member "written" |> to_list |> List.map to_string;
           ap_moved =
             j |> member "moved" |> to_list
             |> List.map (fun e ->
-                   ( e |> member "src" |> to_string,
-                     e |> member "dst" |> to_string,
-                     e |> member "hash" |> to_string ));
+                   ( e |> member key_src |> to_string,
+                     e |> member key_dst |> to_string,
+                     e |> member key_hash |> to_string ));
           ap_created_dirs =
             j |> member "created_dirs" |> to_list |> List.map to_string;
           ap_undone_at =
@@ -266,10 +278,10 @@ module Change_store_fs : Reforge_ports.Change_store.S = struct
       if Sys.file_exists dir && Sys.is_directory dir then
         Array.to_list (Sys.readdir dir)
         |> List.filter_map (fun f ->
-               if Filename.check_suffix f ".json" then
+               if Filename.check_suffix f ext_json then
                  let id = Filename.remove_extension f in
-                 if String.length id > 5 && String.sub id 0 5 = "plan-" then
-                   int_of_string_opt (String.sub id 5 (String.length id - 5))
+                 if String.length id > plan_prefix_len && String.sub id 0 plan_prefix_len = plan_prefix then
+                   int_of_string_opt (String.sub id plan_prefix_len (String.length id - plan_prefix_len))
                  else None
                else None)
       else []
@@ -310,7 +322,7 @@ module Change_store_fs : Reforge_ports.Change_store.S = struct
     else begin
       let results =
         Array.to_list (Sys.readdir dir)
-        |> List.filter (fun f -> Filename.check_suffix f ".json")
+        |> List.filter (fun f -> Filename.check_suffix f ext_json)
         |> List.sort compare
         |> List.map (fun f -> load_plan t (Filename.remove_extension f))
       in
@@ -353,14 +365,14 @@ module Change_store_fs : Reforge_ports.Change_store.S = struct
                 output_string oc content;
                 close_out oc)
               backups;
-            let ap_path = Filename.concat (applied_dir t) (plan.Change_plan.cp_id ^ ".json") in
+            let ap_path = Filename.concat (applied_dir t) (plan.Change_plan.cp_id ^ ext_json) in
             let oc = open_out_bin ap_path in
             Yojson.Basic.pretty_to_channel oc (json_of_applied applied);
             close_out oc;
             Ok ()))
 
   let load_applied t ~plan_id =
-    let path = Filename.concat (applied_dir t) (plan_id ^ ".json") in
+    let path = Filename.concat (applied_dir t) (plan_id ^ ext_json) in
     if not (Sys.file_exists path) then
       Error (Printf.sprintf "no application record for %s" plan_id)
     else
@@ -377,7 +389,7 @@ module Change_store_fs : Reforge_ports.Change_store.S = struct
       | Sys_error e -> Error e
 
   let mark_undone t ~plan_id ~at =
-    let path = Filename.concat (applied_dir t) (plan_id ^ ".json") in
+    let path = Filename.concat (applied_dir t) (plan_id ^ ext_json) in
     if not (Sys.file_exists path) then
       Error (Printf.sprintf "no application record for %s" plan_id)
     else
