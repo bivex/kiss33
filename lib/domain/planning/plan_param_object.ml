@@ -267,21 +267,15 @@ let plan_introduce_param_object ~(ctx : ctx) ~(file : string) ~(fn_name : string
                                                          e_reason = Printf.sprintf "%s takes %s" fn_name record_name;
                                                        }
                                                  | None -> ());
-                                                let mli_len = String.length mli_content in
                                                 List.iter
                                                   (fun idx ->
                                                      match List.nth_opt vs.Source_file.vd_params idx with
                                                      | Some mp ->
                                                          let cut_s = mp.Source_file.fp_loc.Source_file.start_off in
-                                                         let cut_e_raw = mp.Source_file.fp_full_loc.Source_file.end_off in
-                                                         let rec skip_arrow i =
-                                                           if i + 4 <= mli_len && String.sub mli_content i 4 = " -> " then i + 4
-                                                           else if i + 3 <= mli_len && String.sub mli_content i 3 = "-> " then i + 3
-                                                           else if i < mli_len && (mli_content.[i] = ' ' || mli_content.[i] = '\n') then
-                                                             skip_arrow (i + 1)
-                                                           else cut_e_raw
+                                                         let cut_e =
+                                                           skip_type_arrow ~content:mli_content
+                                                             ~offset:mp.Source_file.fp_full_loc.Source_file.end_off
                                                          in
-                                                         let cut_e = skip_arrow cut_e_raw in
                                                          add_edit mli_file
                                                            {
                                                              Change_plan.e_start_off = cut_s;

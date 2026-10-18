@@ -41,16 +41,19 @@ let plan_replace_exception_with_result ~(ctx : ctx) ~(file : string) ~(fn_name :
                       let b = replace_ident ~ident:"invalid_arg" ~replacement:"Error" b in
                       let b = replace_substring ~pattern:"raise (Failure " ~replacement:"Error (" b in
                       let b = replace_substring ~pattern:"raise (Invalid_argument " ~replacement:"Error (" b in
-                      if starts_with_at (String.trim b) 0 "if " && str_contains b " else " then
+                      let else_token = " else " in
+                      let else_len = String.length else_token in
+                      if starts_with_at (String.trim b) 0 "if " && str_contains b else_token then
                         let rec find_else i =
-                          if i + 6 > String.length b then None
-                          else if String.sub b i 6 = " else " then Some i
+                          if i + else_len > String.length b then None
+                          else if String.sub b i else_len = else_token then Some i
                           else find_else (i + 1)
                         in
                         match find_else 0 with
                         | Some else_idx ->
-                            let before = String.sub b 0 (else_idx + 6) in
-                            let after = String.sub b (else_idx + 6) (String.length b - (else_idx + 6)) in
+                            let after_else_idx = else_idx + else_len in
+                            let before = String.sub b 0 after_else_idx in
+                            let after = String.sub b after_else_idx (String.length b - after_else_idx) in
                             let trimmed_after = String.trim after in
                             if not (starts_with_at trimmed_after 0 "Error " || starts_with_at trimmed_after 0 "Ok ") then
                               before ^ "Ok (" ^ trimmed_after ^ ")"

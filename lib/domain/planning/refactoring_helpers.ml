@@ -429,3 +429,20 @@ let first_element = function
   | [] -> None
   | x :: _ -> Some x
 
+let skip_type_arrow ~content ~offset =
+  let len = String.length content in
+  let arrow_token = " -> " in
+  let arrow_len = String.length arrow_token in
+  let compact_arrow_token = "-> " in
+  let compact_arrow_len = String.length compact_arrow_token in
+  let rec skip i =
+    if i + arrow_len <= len && String.sub content i arrow_len = arrow_token then
+      i + arrow_len
+    else if i + compact_arrow_len <= len && String.sub content i compact_arrow_len = compact_arrow_token then
+      i + compact_arrow_len
+    else if i < len && (content.[i] = ' ' || content.[i] = '\n') then
+      skip (i + 1)
+    else offset
+  in
+  skip offset
+

@@ -62,3 +62,5 @@ val extract_type_decl : content:string -> Source_file.type_def -> string option
 val last_element : 'a list -> 'a option
 
 val first_element : 'a list -> 'a option
+
+val skip_type_arrow : content:string -> offset:int -> int

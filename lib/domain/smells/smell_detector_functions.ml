@@ -14,9 +14,12 @@ let is_generic_name name =
   | "data" | "temp" | "tmp" | "val_" | "result" | "item" | "obj" | "res" | "val" -> true
   | _ -> false
 
+let confidence_high = 0.95
+let confidence_normal = 0.90
+
 let is_trivial_number s =
   match s with
-  | "0" | "1" | "2" | "-1" | "0.0" | "1.0" | "0." | "1." -> true
+  | "0" | "1" | "2" | "3" | "4" | "-1" | "0.0" | "1.0" | "0." | "1." -> true
   | _ -> false
 
 let is_trivial_string s =
@@ -137,7 +140,7 @@ let detect_function_smells ~(file : string) ~(content : string)
         symbol = fn_name;
         evidence = Printf.sprintf "cyclomatic complexity of '%s' is %d" fn_name cc;
         threshold = "cyclomatic_complexity > 10";
-        confidence = 0.95;
+        confidence = confidence_high;
         suggested_refactoring = Printf.sprintf "reforge plan decompose-match %s %s or extract-fn" file fn_name;
       };
 
@@ -154,7 +157,7 @@ let detect_function_smells ~(file : string) ~(content : string)
         symbol = fn_name;
         evidence = Printf.sprintf "nesting depth in '%s' reaches %d levels" fn_name depth;
         threshold = "nesting_depth > 4";
-        confidence = 0.90;
+        confidence = confidence_normal;
         suggested_refactoring = Printf.sprintf "reforge plan extract-fn %s %d-%d <SUB_FN>" file start_l end_l;
       };
 
@@ -215,7 +218,7 @@ let detect_function_smells ~(file : string) ~(content : string)
         symbol = fn_name;
         evidence = Printf.sprintf "function '%s' calls partial functions (List.hd/tl or Option.get)" fn_name;
         threshold = "List.hd_or_List.tl_or_Option.get_used_without_proof";
-        confidence = 0.95;
+        confidence = confidence_high;
         suggested_refactoring = "replace partial functions with total pattern matches or Option.value";
       };
 
@@ -246,7 +249,7 @@ let detect_function_smells ~(file : string) ~(content : string)
           symbol = p.Source_file.fp_name;
           evidence = Printf.sprintf "parameter '%s' in '%s' is boolean" p.Source_file.fp_name fn_name;
           threshold = "function_has_boolean_parameter";
-          confidence = 0.90;
+          confidence = confidence_normal;
           suggested_refactoring = Printf.sprintf "reforge plan label-arg %s %s %s ~%s" file fn_name p.Source_file.fp_name p.Source_file.fp_name;
         }) vd.Source_file.vd_params;
 
@@ -265,7 +268,7 @@ let detect_function_smells ~(file : string) ~(content : string)
           symbol = fn_name;
           evidence = Printf.sprintf "function '%s' catches all exceptions and silently swallows them" fn_name;
           threshold = "exception_caught_and_ignored";
-          confidence = 0.95;
+          confidence = confidence_high;
           suggested_refactoring = "handle errors with Result.bind or log exception instead of swallowing";
         }
       else if Refactoring_helpers.str_contains fn_body_str "with _ ->"
@@ -281,7 +284,7 @@ let detect_function_smells ~(file : string) ~(content : string)
           symbol = fn_name;
           evidence = Printf.sprintf "function '%s' catches generic exception without matching specific constructor" fn_name;
           threshold = "exception_handler_catches_all_exceptions_without_reason";
-          confidence = 0.90;
+          confidence = confidence_normal;
           suggested_refactoring = "catch specific exception constructors (e.g. Not_found, Sys_error)";
         }
     end;
@@ -389,7 +392,7 @@ let detect_function_smells ~(file : string) ~(content : string)
         symbol = lit_str;
         evidence = Printf.sprintf "literal %S repeated %d times in %s" lit_str count file;
         threshold = thresh;
-        confidence = 0.90;
+        confidence = confidence_normal;
         suggested_refactoring = Printf.sprintf "reforge plan extract-constant %s %S <CONST_NAME>" file lit_str;
       }) counts;
 

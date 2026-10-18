@@ -94,15 +94,10 @@ let plan_remove_arg ~(ctx : ctx) ~(file : string) ~(fn_name : string) ~(arg_name
                                  (match target_mli_param with
                                   | Some mli_p ->
                                       let cut_s = mli_p.fp_loc.start_off in
-                                      let cut_e_raw = mli_p.fp_full_loc.end_off in
-                                      let len = String.length mli_content in
-                                      let rec skip_arrow i =
-                                        if i + 4 <= len && String.sub mli_content i 4 = " -> " then i + 4
-                                        else if i + 3 <= len && String.sub mli_content i 3 = "-> " then i + 3
-                                        else if i < len && (mli_content.[i] = ' ' || mli_content.[i] = '\n') then skip_arrow (i + 1)
-                                        else cut_e_raw
+                                      let cut_e =
+                                        skip_type_arrow ~content:mli_content
+                                          ~offset:mli_p.fp_full_loc.end_off
                                       in
-                                      let cut_e = skip_arrow cut_e_raw in
                                       add_edit mli_file
                                         {
                                           Change_plan.e_start_off = cut_s;
