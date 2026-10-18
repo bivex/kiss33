@@ -137,7 +137,7 @@ let pe_path_fs_msg = function
   | Src_not_found p -> Some (Printf.sprintf "source not found in repository: %s" p)
   | Dst_exists p ->
       Some (Printf.sprintf
-        "destination already exists (reforge requires an explicit, free target \
+        "destination already exists (kiss33 requires an explicit, free target \
          path): %s" p)
   | Dst_inside_src (s, d) ->
       Some (Printf.sprintf "destination %s is inside source %s" d s)
@@ -416,9 +416,9 @@ let pe_sugg_safety_misc = function
   | No_match_to_decompose (_, fn) ->
       Some (Printf.sprintf "ensure the body of '%s' contains a top-level 'match ... with' expression" fn)
   | Mli_already_exists p ->
-      Some (Printf.sprintf "use 'reforge plan sync-mli %s' to update the existing interface" (Filename.remove_extension p ^ ".ml"))
+      Some (Printf.sprintf "use 'kiss33 plan sync-mli %s' to update the existing interface" (Filename.remove_extension p ^ ".ml"))
   | Mli_not_found p ->
-      Some (Printf.sprintf "use 'reforge plan extract-mli %s' to generate the companion interface" (Filename.remove_extension p ^ ".ml"))
+      Some (Printf.sprintf "use 'kiss33 plan extract-mli %s' to generate the companion interface" (Filename.remove_extension p ^ ".ml"))
   | Src_eq_dst ->
       Some "destination path must differ from source path"
   | _ -> None

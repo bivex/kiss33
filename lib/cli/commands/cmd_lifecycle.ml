@@ -1,9 +1,9 @@
 (* Plan lifecycle commands: preview, apply, validate, diff, undo, status. *)
 
-open Reforge_domain
+open Kiss33_domain
 open Cli_common
 
-module App = Reforge_app
+module App = Kiss33_app
 
 let cmd_preview = "preview"
 let cmd_apply = "apply"
@@ -95,7 +95,7 @@ let run_apply ~rt ~json root plan_ref =
           (List.length applied.Change_plan.ap_edited)
           (List.length applied.Change_plan.ap_written)
           (List.length applied.Change_plan.ap_created_dirs);
-        Printf.printf "next: reforge validate --root %s\n" root
+        Printf.printf "next: kiss33 validate --root %s\n" root
       end;
       0
   | Error failure ->
@@ -110,12 +110,12 @@ let extract_applied_files (ap : Change_plan.applied) =
   List.map (fun (p, _, _) -> p) ap.ap_edited
   @ List.map (fun (_, d, _) -> d) ap.ap_moved
 
-let load_plan_files (type a) (module St : Reforge_ports.Change_store.S with type t = a) (store_t : a) (p : Change_plan.t) =
+let load_plan_files (type a) (module St : Kiss33_ports.Change_store.S with type t = a) (store_t : a) (p : Change_plan.t) =
   match St.load_applied store_t ~plan_id:p.Change_plan.cp_id with
   | Ok ap -> extract_applied_files ap
   | Error _ -> []
 
-let resolve_changed_files (type a) (module St : Reforge_ports.Change_store.S with type t = a) (store_t : a) =
+let resolve_changed_files (type a) (module St : Kiss33_ports.Change_store.S with type t = a) (store_t : a) =
   match St.all_plans store_t with
   | Ok plans -> (
       match List.nth_opt (List.rev plans) 0 with
@@ -152,7 +152,7 @@ let emit_validate_json checks =
 
 let run_validate ~rt ~json root =
   let config = Cli_config.load ~rt ~root in
-  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let module St = (val rt.Kiss33_ports.Runtime.store) in
   let store_t = St.create ~root in
   let changed = resolve_changed_files (module St) store_t in
   match App.Validate_changes.run ~rt ~config ~root ~changed () with
@@ -166,11 +166,11 @@ let latest_plan_id plans =
   | Some p -> Ok p.Change_plan.cp_id
   | None -> Error "no plans recorded yet"
 
-let resolve_diff_plan_id (type a) (module St : Reforge_ports.Change_store.S with type t = a) (store_t : a) = function
+let resolve_diff_plan_id (type a) (module St : Kiss33_ports.Change_store.S with type t = a) (store_t : a) = function
   | Some ref -> Ok ref
   | None -> Result.bind (St.all_plans store_t) latest_plan_id
 
-let collect_backup_diffs (type a) (module St : Reforge_ports.Change_store.S with type t = a) (store_t : a) ~plan_id ops =
+let collect_backup_diffs (type a) (module St : Kiss33_ports.Change_store.S with type t = a) (store_t : a) ~plan_id ops =
   match St.load_applied store_t ~plan_id with
   | Ok _ ->
       List.filter_map
@@ -220,7 +220,7 @@ let emit_diff_json (plan : Change_plan.t) all =
   0
 
 let run_diff ~rt ~json root plan_ref_opt =
-  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let module St = (val rt.Kiss33_ports.Runtime.store) in
   let store_t = St.create ~root in
   match resolve_diff_plan_id (module St) store_t plan_ref_opt with
   | Error e -> emit_error_exit ~command:cmd_diff ~json e
@@ -236,7 +236,7 @@ let run_diff ~rt ~json root plan_ref_opt =
           if json then emit_diff_json plan all
           else emit_diff_text all)
 
-let find_latest_applied (type a) (module St : Reforge_ports.Change_store.S with type t = a) (store_t : a) plans =
+let find_latest_applied (type a) (module St : Kiss33_ports.Change_store.S with type t = a) (store_t : a) plans =
   let is_applied p =
     match St.load_applied store_t ~plan_id:p.Change_plan.cp_id with
     | Ok ap -> ap.Change_plan.ap_status = Change_plan.Applied
@@ -247,12 +247,12 @@ let find_latest_applied (type a) (module St : Reforge_ports.Change_store.S with 
   | Some p -> Ok p.Change_plan.cp_id
   | None -> Error "no applied plans to undo"
 
-let resolve_undo_plan_id (type a) (module St : Reforge_ports.Change_store.S with type t = a) (store_t : a) plan_ref =
+let resolve_undo_plan_id (type a) (module St : Kiss33_ports.Change_store.S with type t = a) (store_t : a) plan_ref =
   if plan_ref <> "" then Ok plan_ref
   else Result.bind (St.all_plans store_t) (find_latest_applied (module St) store_t)
 
 let run_undo ~rt ~json root plan_ref =
-  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let module St = (val rt.Kiss33_ports.Runtime.store) in
   let store_t = St.create ~root in
   match resolve_undo_plan_id (module St) store_t plan_ref with
   | Error e -> emit_error_exit ~command:cmd_undo ~json ~code:exit_undo_refused_code e
@@ -279,7 +279,7 @@ let emit_status_json plans =
 
 let emit_status_text = function
   | [] ->
-      print_endline "no plans recorded (see: reforge plan move --help)";
+      print_endline "no plans recorded (see: kiss33 plan move --help)";
       0
   | plans ->
       Printf.printf "%-12s %-10s %-25s %s\n" "ID" "STATUS" "CREATED" "DESCRIPTION";

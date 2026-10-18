@@ -1,6 +1,6 @@
 (* Shared CLI constants, JSON emitters, and plan formatting helpers. *)
 
-open Reforge_domain
+open Kiss33_domain
 
 let exit_usage_code = 1
 let exit_validation_code = 2
@@ -108,7 +108,7 @@ let print_plan_text plan path =
   Printf.printf "  operations:\n";
   List.iter print_plan_op plan.Change_plan.cp_ops;
   List.iter (fun w -> Printf.printf "  warning: %s\n" w) plan.Change_plan.cp_warnings;
-  Printf.printf "next: reforge preview %s\n" path
+  Printf.printf "next: kiss33 preview %s\n" path
 
 let emit_plan_created ~command ~json plan path =
   if json then
@@ -124,7 +124,7 @@ let fail_exit ~json ~command message =
   exit exit_usage_code
 
 let resolve_plan_id (type a)
-    (module St : Reforge_ports.Change_store.S with type t = a) store_t ref =
+    (module St : Kiss33_ports.Change_store.S with type t = a) store_t ref =
   if ref <> "" then Ok ref
   else
     match St.all_plans store_t with
@@ -136,20 +136,20 @@ let resolve_plan_id (type a)
         | [] -> Error "no plans found in repository")
 
 let load_plan_by_id (type a)
-    (module St : Reforge_ports.Change_store.S with type t = a) store_t ~json ~command plan_id =
+    (module St : Kiss33_ports.Change_store.S with type t = a) store_t ~json ~command plan_id =
   match St.load_plan store_t plan_id with
   | Ok plan -> plan
   | Error e -> fail_exit ~json ~command e
 
 let load_plan_or_exit ~rt ~json ~root ~command ref =
-  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let module St = (val rt.Kiss33_ports.Runtime.store) in
   let store_t = St.create ~root in
   match resolve_plan_id (module St) store_t ref with
   | Error e -> fail_exit ~json ~command e
   | Ok plan_id -> load_plan_by_id (module St) store_t ~json ~command plan_id
 
 let with_fs_read ~rt ~root path =
-  let module Fs = (val rt.Reforge_ports.Runtime.filesystem) in
+  let module Fs = (val rt.Kiss33_ports.Runtime.filesystem) in
   match Fs.create ~root with
   | Error e -> Error e
   | Ok fs_t -> Fs.read fs_t ~rel:path

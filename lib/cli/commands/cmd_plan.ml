@@ -1,9 +1,9 @@
 (* Plan creation commands: all refactoring intents. *)
 
-open Reforge_domain
+open Kiss33_domain
 open Cli_common
 
-module App = Reforge_app
+module App = Kiss33_app
 
 let msg_missing_file = "missing required argument: FILE"
 let msg_missing_file_fn = "missing required arguments: FILE FN"

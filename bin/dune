@@ -1,4 +1,4 @@
 (executable
- (public_name reforge)
+ (public_name kiss33)
  (name main)
- (libraries reforge_cli reforge_infra cmdliner))
+ (libraries kiss33_cli kiss33_infra cmdliner))

@@ -1,6 +1,6 @@
-(* CLI command handler for smell detection: reforge smells [PATH]. *)
+(* CLI command handler for smell detection: kiss33 smells [PATH]. *)
 
-open Reforge_domain
+open Kiss33_domain
 open Cli_common
 
 let smell_to_json (s : Smell_types.smell) : Yojson.Safe.t =
@@ -22,7 +22,7 @@ let smell_to_json (s : Smell_types.smell) : Yojson.Safe.t =
 let smells_to_json (smells : Smell_types.smell list) : Yojson.Safe.t =
   `List (List.map smell_to_json smells)
 
-let run_smells ~(rt : Reforge_ports.Runtime.t) ~(json : bool) root target_path
+let run_smells ~(rt : Kiss33_ports.Runtime.t) ~(json : bool) root target_path
     severity_str category_str =
   let config = Cli_config.load ~rt ~root in
   let min_severity =
@@ -34,7 +34,7 @@ let run_smells ~(rt : Reforge_ports.Runtime.t) ~(json : bool) root target_path
     else Smell_types.category_of_string category_str
   in
   let target = if target_path = "" then None else Some target_path in
-  match Reforge_app.Detect_smells.detect ~rt ~config ~root ?target_path:target ?min_severity ?category () with
+  match Kiss33_app.Detect_smells.detect ~rt ~config ~root ?target_path:target ?min_severity ?category () with
   | Error e ->
       if json then (emit_error_json ~command:"smells" e; exit exit_usage_code)
       else (prerr_endline ("error: " ^ e); exit exit_usage_code)

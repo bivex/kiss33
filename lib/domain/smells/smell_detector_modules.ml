@@ -17,7 +17,7 @@ let check_module_size_and_god ~file ~line_count ~dep_count ~fn_count ~emit =
       evidence = Printf.sprintf "module %s spans %d lines" file line_count;
       threshold = "module_lines > 500";
       confidence = 1.0;
-      suggested_refactoring = Printf.sprintf "reforge plan split-module %s --submodule <NAME> --functions <FNS>" file;
+      suggested_refactoring = Printf.sprintf "kiss33 plan split-module %s --submodule <NAME> --functions <FNS>" file;
     };
 
   (* 2. God_Module: module_lines > 500 AND high dependencies/value count *)
@@ -49,7 +49,7 @@ let check_module_size_and_god ~file ~line_count ~dep_count ~fn_count ~emit =
       evidence = Printf.sprintf "module %s exports %d top-level functions" file fn_count;
       threshold = "exported_value_count > 30";
       confidence = 1.0;
-      suggested_refactoring = Printf.sprintf "reforge plan extract-mli %s with minimal public API" file;
+      suggested_refactoring = Printf.sprintf "kiss33 plan extract-mli %s with minimal public API" file;
     }
 
 (* Check open statements count and companion mli existence *)
@@ -72,7 +72,7 @@ let check_module_hygiene ~file ~line_count ~fn_count ~repo ~emit (analysis : Sou
       evidence = Printf.sprintf "module %s contains %d top-level open statements" file open_count;
       threshold = "open_count > 10";
       confidence = 1.0;
-      suggested_refactoring = Printf.sprintf "reforge plan qualify-open %s <MODULE>" file;
+      suggested_refactoring = Printf.sprintf "kiss33 plan qualify-open %s <MODULE>" file;
     };
 
   (* 5. Missing_Interface: module has no .mli and public API > 10 *)
@@ -90,7 +90,7 @@ let check_module_hygiene ~file ~line_count ~fn_count ~repo ~emit (analysis : Sou
         evidence = Printf.sprintf "module %s has %d functions but lacks a companion .mli interface" file fn_count;
         threshold = "module_has_no_mli AND_public_api_is_large";
         confidence = 1.0;
-        suggested_refactoring = Printf.sprintf "reforge plan extract-mli %s" file;
+        suggested_refactoring = Printf.sprintf "kiss33 plan extract-mli %s" file;
       }
   end
 
@@ -131,7 +131,7 @@ let check_architecture_and_coupling ~file ~line_count ~dep_count ~graph ~emit =
           evidence = Printf.sprintf "domain module %s directly references non-domain module %s" file edge.dst;
           threshold = "domain_layer_references_infrastructure_or_framework";
           confidence = 1.0;
-          suggested_refactoring = "invert dependency using port in reforge_ports";
+          suggested_refactoring = "invert dependency using port in kiss33_ports";
         }) succs
   end
 

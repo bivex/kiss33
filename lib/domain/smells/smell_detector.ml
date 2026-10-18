@@ -31,7 +31,7 @@ let smell_of_cycle = function
         evidence = Printf.sprintf "module cycle detected: %s" cycle_str;
         threshold = "module_dependency_graph_contains_cycle";
         confidence = 1.0;
-        suggested_refactoring = "break cycle by moving shared functions with reforge plan move-fn";
+        suggested_refactoring = "break cycle by moving shared functions with kiss33 plan move-fn";
       }
   | _ -> None
 

@@ -1,6 +1,6 @@
 (* Source location and longident helpers for AST analysis. *)
 
-open Reforge_domain
+open Kiss33_domain
 
 let loc_of_positions (a : Lexing.position) (b : Lexing.position) :
     Source_file.loc =

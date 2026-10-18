@@ -1,6 +1,6 @@
 (** AST visitor helpers for function definitions and val specifications. *)
 
-open Reforge_domain
+open Kiss33_domain
 
 val extract_var : Parsetree.pattern -> (string * Source_file.loc) option
 

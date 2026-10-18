@@ -3,7 +3,7 @@
    refactoring logic lives behind the ports. Command handlers are modularized
    under lib/cli/commands/. *)
 
-open Reforge_domain
+open Kiss33_domain
 open Cmdliner
 open Cmdliner.Term.Syntax
 open Cli_common
@@ -47,7 +47,7 @@ let make_inspect_cmds ~rt ~root ~json () =
       (let+ r = root and+ j = json in run_tree ~rt ~json:j r)
   in
   let init_cmd =
-    mk "init" "Create .reforge/config.json with defaults."
+    mk "init" "Create .kiss33/config.json with defaults."
       (let+ r = root and+ j = json in run_init ~rt ~json:j r)
   in
   [ init_cmd; scan_cmd; inspect_cmd; tree_cmd ]
@@ -394,12 +394,12 @@ let run ~rt ~argv () : int =
     @ [ make_plan_cmd ~rt ~root ~json () ]
     @ make_lifecycle_cmds ~rt ~root ~json ()
   in
-  let doc = "reforge is a compiler-aware refactoring engine for OCaml repositories." in
+  let doc = "kiss33 is a compiler-aware refactoring engine for OCaml repositories." in
   let man =
     [
       `S "DESCRIPTION";
       `P doc;
-      `P "Every mutation goes through a plan: reforge plan move, reforge preview, reforge apply, reforge validate.";
+      `P "Every mutation goes through a plan: kiss33 plan move, kiss33 preview, kiss33 apply, kiss33 validate.";
       `S "EXIT CODES";
       `P "0 success; 1 error; 2 validation failed; 3 plan stale or conflicting; 4 violations or cycles detected; 5 undo refused.";
     ]
@@ -407,7 +407,7 @@ let run ~rt ~argv () : int =
   let cmd =
     Cmd.group
       ~default:(Term.ret (Term.const (`Help (`Auto, None))))
-      (Cmd.info "reforge" ~version:Version.version ~doc ~man)
+      (Cmd.info "kiss33" ~version:Version.version ~doc ~man)
       commands
   in
   match Cmd.eval_value ~argv cmd with

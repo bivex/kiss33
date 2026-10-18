@@ -1,7 +1,7 @@
 (* OCaml source analyzer adapter backed by compiler-libs.
-   Coordinates specialized AST visitors and implements Reforge_ports.Source_analyzer. *)
+   Coordinates specialized AST visitors and implements Kiss33_ports.Source_analyzer. *)
 
-open Reforge_domain
+open Kiss33_domain
 open Analyzer_loc
 open Analyzer_function_defs
 open Analyzer_type_defs
@@ -454,7 +454,7 @@ let analyze_content ~(path : string) ~(kind : file_kind) (content : string) :
   | Syntaxerr.Error err -> Source_file.failed_analysis (format_syntax_error path err)
   | e -> Source_file.failed_analysis (format_parse_exn path e)
 
-module Ocaml_analyzer : Reforge_ports.Source_analyzer.S = struct
+module Ocaml_analyzer : Kiss33_ports.Source_analyzer.S = struct
   type t = unit
 
   let create () = ()
@@ -467,4 +467,4 @@ module Ocaml_analyzer : Reforge_ports.Source_analyzer.S = struct
   let parse_dune () ~content = Dune_analyzer.parse_dune_content content
 end
 
-let ocaml_analyzer = (module Ocaml_analyzer : Reforge_ports.Source_analyzer.S)
+let ocaml_analyzer = (module Ocaml_analyzer : Kiss33_ports.Source_analyzer.S)

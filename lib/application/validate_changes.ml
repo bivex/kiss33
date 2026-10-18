@@ -2,7 +2,7 @@
    still parses and, when configured, that it builds. A successful apply is
    never evidence of a valid change. *)
 
-open Reforge_domain
+open Kiss33_domain
 
 let ( let* ) = Result.bind
 
@@ -29,8 +29,8 @@ let resolve_targets (repo : Repository.t) (changed : string list) : string list 
       changed
 
 let check_file_parse (type a b)
-    (module Fs : Reforge_ports.Filesystem.S with type t = a)
-    (module An : Reforge_ports.Source_analyzer.S with type t = b)
+    (module Fs : Kiss33_ports.Filesystem.S with type t = a)
+    (module An : Kiss33_ports.Source_analyzer.S with type t = b)
     (fs_t : a) (an_t : b) (path : string) : check option =
   let name = parse_check_name path in
   match Fs.read fs_t ~rel:path with
@@ -59,7 +59,7 @@ let build_parse_check (targets : string list) (parse_results : check list) : che
   { c_name; c_passed; c_details }
 
 let run_build_check (type c)
-    (module Bu : Reforge_ports.Build_runner.S with type t = c)
+    (module Bu : Kiss33_ports.Build_runner.S with type t = c)
     (bu_t : c) (repo : Repository.t) (config : Config.t) : check list =
   let has_dune_project =
     List.exists
@@ -78,11 +78,11 @@ let run_build_check (type c)
         [ { c_name = "build"; c_passed = code = 0; c_details } ]
 
 (* Parse-check the given files (or all OCaml files when none are given). *)
-let run ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
+let run ~(rt : Kiss33_ports.Runtime.t) ~(config : Config.t) ~root
     ?(changed : string list = []) () : (check list, string) result =
-  let module Fs = (val rt.Reforge_ports.Runtime.filesystem) in
-  let module An = (val rt.Reforge_ports.Runtime.analyzer) in
-  let module Bu = (val rt.Reforge_ports.Runtime.build) in
+  let module Fs = (val rt.Kiss33_ports.Runtime.filesystem) in
+  let module An = (val rt.Kiss33_ports.Runtime.analyzer) in
+  let module Bu = (val rt.Kiss33_ports.Runtime.build) in
   let an_t = An.create () in
   let bu_t = Bu.create () in
   let* repo = Recon.scan ~rt ~config ~root () in

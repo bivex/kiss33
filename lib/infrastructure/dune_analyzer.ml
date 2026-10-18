@@ -1,6 +1,6 @@
 (* Dune file s-expression parser and target extractor. *)
 
-open Reforge_domain
+open Kiss33_domain
 
 type sexp =
   | Atom of string * int * int   (* text, start, stop *)

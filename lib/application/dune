@@ -1,4 +1,4 @@
 (library
- (name reforge_app)
- (libraries reforge_ports reforge_domain unix)
+ (name kiss33_app)
+ (libraries kiss33_ports kiss33_domain unix)
  (flags (:standard -w -70)))

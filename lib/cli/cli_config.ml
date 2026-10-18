@@ -1,7 +1,7 @@
-(* Configuration loading: [.reforge/config.json] over defaults. This is an
+(* Configuration loading: [.kiss33/config.json] over defaults. This is an
    adapter concern (file format), so it lives in the CLI layer. *)
 
-open Reforge_domain
+open Kiss33_domain
 open Yojson.Basic.Util
 
 let extract_strings json key default =
@@ -30,11 +30,11 @@ let parse_config_json (default : Config.t) (json : Yojson.Basic.t) : Config.t =
   }
 
 let read_config_content (type a)
-    (module Fs : Reforge_ports.Filesystem.S with type t = a) root : string option =
+    (module Fs : Kiss33_ports.Filesystem.S with type t = a) root : string option =
   match Fs.create ~root with
   | Error _ -> None
   | Ok fs_t -> (
-      match Fs.read fs_t ~rel:".reforge/config.json" with
+      match Fs.read fs_t ~rel:".kiss33/config.json" with
       | Error _ -> None
       | Ok content -> Some content)
 
@@ -43,8 +43,8 @@ let parse_config_content (default : Config.t) content : Config.t =
   | exception Yojson.Json_error _ -> default
   | json -> parse_config_json default json
 
-let load ~(rt : Reforge_ports.Runtime.t) ~root : Config.t =
-  let module Fs = (val rt.Reforge_ports.Runtime.filesystem) in
+let load ~(rt : Kiss33_ports.Runtime.t) ~root : Config.t =
+  let module Fs = (val rt.Kiss33_ports.Runtime.filesystem) in
   let default = Config.default in
   match read_config_content (module Fs) root with
   | None -> default

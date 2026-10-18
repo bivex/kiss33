@@ -1,6 +1,6 @@
 (* Application use case: detect Clean Code smells across the repository. *)
 
-open Reforge_domain
+open Kiss33_domain
 
 let ( let* ) = Result.bind
 
@@ -21,11 +21,11 @@ let matches_category category (cat : Smell_types.category) : bool =
   | Some c -> cat = c
   | None -> true
 
-let detect ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
+let detect ~(rt : Kiss33_ports.Runtime.t) ~(config : Config.t) ~root
     ?target_path ?(min_severity : Smell_types.severity option)
     ?(category : Smell_types.category option) () :
     (Smell_types.smell list, string) result =
-  let module Fs = (val rt.Reforge_ports.Runtime.filesystem) in
+  let module Fs = (val rt.Kiss33_ports.Runtime.filesystem) in
   let* fs_t = Fs.create ~root in
   let* repo, analyses, graph = Recon.full ~rt ~config ~root () in
   let contents rel =

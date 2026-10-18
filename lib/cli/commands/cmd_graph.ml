@@ -1,9 +1,9 @@
 (* Graph analysis commands: deps, cycles, report. *)
 
-open Reforge_domain
+open Kiss33_domain
 open Cli_common
 
-module App = Reforge_app
+module App = Kiss33_app
 
 let cmd_deps = "deps"
 let cmd_cycles = "cycles"

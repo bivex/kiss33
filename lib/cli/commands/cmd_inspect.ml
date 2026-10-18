@@ -1,9 +1,9 @@
 (* Inspection and inventory commands: scan, inspect, tree, init. *)
 
-open Reforge_domain
+open Kiss33_domain
 open Cli_common
 
-module App = Reforge_app
+module App = Kiss33_app
 
 let cmd_init = "init"
 let cmd_scan = "scan"
@@ -21,19 +21,19 @@ let emit_error_and_exit ~command ~json msg =
   exit exit_usage_code
 
 let run_init ~rt ~json root =
-  let module Fs = (val rt.Reforge_ports.Runtime.filesystem) in
-  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let module Fs = (val rt.Kiss33_ports.Runtime.filesystem) in
+  let module St = (val rt.Kiss33_ports.Runtime.store) in
   match Fs.create ~root with
   | Error e -> emit_error_and_exit ~command:cmd_init ~json e
   | Ok fs_t ->
-      if Fs.exists fs_t ~rel:".reforge/config.json" then
-        emit_status ~command:cmd_init ~json ".reforge/config.json already exists; left untouched"
+      if Fs.exists fs_t ~rel:".kiss33/config.json" then
+        emit_status ~command:cmd_init ~json ".kiss33/config.json already exists; left untouched"
       else
         let store_t = St.create ~root in
         let json_conf = Yojson.Basic.pretty_to_string (Cli_config.to_json Config.default) ^ "\n" in
         match St.save_config store_t ~json:json_conf with
         | Error e -> emit_error_and_exit ~command:cmd_init ~json e
-        | Ok () -> emit_status ~command:cmd_init ~json "created .reforge/config.json with defaults"
+        | Ok () -> emit_status ~command:cmd_init ~json "created .kiss33/config.json with defaults"
 
 let scan_json_payload (repo : Repository.t) =
   let files =
@@ -280,7 +280,7 @@ let run_tree ~rt ~json root =
   let config = Cli_config.load ~rt ~root in
   if json then
     emit_error_and_exit ~command:cmd_tree ~json:false
-      "error: --json is not supported for tree; use reforge scan --json"
+      "error: --json is not supported for tree; use kiss33 scan --json"
   else
     match App.Recon.scan ~rt ~config ~root () with
     | Error e -> emit_error_and_exit ~command:cmd_tree ~json:false e

@@ -1,6 +1,6 @@
 (* Common CLI utilities, error codes, and formatting functions. *)
 
-open Reforge_domain
+open Kiss33_domain
 
 val exit_usage_code : int
 val exit_validation_code : int
@@ -30,7 +30,7 @@ val emit_plan_created :
   int
 
 val load_plan_or_exit :
-  rt:Reforge_ports.Runtime.t ->
+  rt:Kiss33_ports.Runtime.t ->
   json:bool ->
   root:string ->
   command:string ->
@@ -38,7 +38,7 @@ val load_plan_or_exit :
   Change_plan.t
 
 val with_fs_read :
-  rt:Reforge_ports.Runtime.t ->
+  rt:Kiss33_ports.Runtime.t ->
   root:string ->
   string ->
   (string, string) result

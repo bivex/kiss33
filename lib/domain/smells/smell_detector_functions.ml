@@ -116,7 +116,7 @@ module Checkers = struct
         evidence = Printf.sprintf "function '%s' spans %d lines" fn_name lines;
         threshold = "function_lines > 50";
         confidence = 1.0;
-        suggested_refactoring = Printf.sprintf "reforge plan extract-fn %s %d-%d <NEW_FN_NAME>" ctx.file start_l end_l;
+        suggested_refactoring = Printf.sprintf "kiss33 plan extract-fn %s %d-%d <NEW_FN_NAME>" ctx.file start_l end_l;
       }
 
   let check_too_many_arguments (ctx : fn_ctx) =
@@ -128,7 +128,7 @@ module Checkers = struct
       let names = List.map (fun p -> p.Source_file.fp_name) params in
       let params_str = String.concat ", " names in
       let suggestion =
-        Printf.sprintf "reforge plan introduce-param-object %s %s --args %s --record <TYPE_NAME>"
+        Printf.sprintf "kiss33 plan introduce-param-object %s %s --args %s --record <TYPE_NAME>"
           ctx.file fn_name (String.concat "," names)
       in
       ctx.emit {
@@ -163,7 +163,7 @@ module Checkers = struct
         evidence = Printf.sprintf "cyclomatic complexity of '%s' is %d" fn_name cc;
         threshold = "cyclomatic_complexity > 10";
         confidence = confidence_high;
-        suggested_refactoring = Printf.sprintf "reforge plan decompose-match %s %s or extract-fn" ctx.file fn_name;
+        suggested_refactoring = Printf.sprintf "kiss33 plan decompose-match %s %s or extract-fn" ctx.file fn_name;
       };
     let depth = compute_nesting_depth body_str in
     if depth > 4 then
@@ -178,7 +178,7 @@ module Checkers = struct
         evidence = Printf.sprintf "nesting depth in '%s' reaches %d levels" fn_name depth;
         threshold = "nesting_depth > 4";
         confidence = confidence_normal;
-        suggested_refactoring = Printf.sprintf "reforge plan extract-fn %s %d-%d <SUB_FN>" ctx.file start_l end_l;
+        suggested_refactoring = Printf.sprintf "kiss33 plan extract-fn %s %d-%d <SUB_FN>" ctx.file start_l end_l;
       }
 
   let check_fn_metrics (ctx : fn_ctx) =
@@ -209,7 +209,7 @@ module Checkers = struct
         evidence = Printf.sprintf "function '%s' uses failwith or invalid_arg instead of returning Result" fn_name;
         threshold = "failwith_or_invalid_arg_used_for_expected_errors";
         confidence = 1.0;
-        suggested_refactoring = Printf.sprintf "reforge plan replace-exception-with-result %s %s" ctx.file fn_name;
+        suggested_refactoring = Printf.sprintf "kiss33 plan replace-exception-with-result %s %s" ctx.file fn_name;
       }
 
   let check_partial_functions (ctx : fn_ctx) fn_refs =
@@ -270,7 +270,7 @@ module Checkers = struct
           evidence = Printf.sprintf "parameter '%s' in '%s' is boolean" p.Source_file.fp_name fn_name;
           threshold = "function_has_boolean_parameter";
           confidence = confidence_normal;
-          suggested_refactoring = Printf.sprintf "reforge plan label-arg %s %s %s ~%s" ctx.file fn_name p.Source_file.fp_name p.Source_file.fp_name;
+          suggested_refactoring = Printf.sprintf "kiss33 plan label-arg %s %s %s ~%s" ctx.file fn_name p.Source_file.fp_name p.Source_file.fp_name;
         }) ctx.vd.Source_file.vd_params
 
   let swallowed_patterns = [ "with _ -> ()"; "with _ -> None"; "with _exn -> ()" ]
@@ -349,7 +349,7 @@ module Checkers = struct
         evidence = Printf.sprintf "function has single-letter non-standard name '%s'" fn_name;
         threshold = "identifier_length == 1";
         confidence = 1.0;
-        suggested_refactoring = Printf.sprintf "reforge plan rename-fn %s %s <DESCRIPTIVE_NAME>" ctx.file fn_name;
+        suggested_refactoring = Printf.sprintf "kiss33 plan rename-fn %s %s <DESCRIPTIVE_NAME>" ctx.file fn_name;
       };
     if is_generic_name fn_name && lines > 20 then
       ctx.emit {
@@ -363,7 +363,7 @@ module Checkers = struct
         evidence = Printf.sprintf "function has generic name '%s' in %d-line scope" fn_name lines;
         threshold = "identifier_is_generic AND scope_size > 20";
         confidence = 0.85;
-        suggested_refactoring = Printf.sprintf "reforge plan rename-fn %s %s <SPECIFIC_NAME>" ctx.file fn_name;
+        suggested_refactoring = Printf.sprintf "kiss33 plan rename-fn %s %s <SPECIFIC_NAME>" ctx.file fn_name;
       }
 
   let check_matches ~file ~emit (matches : Source_file.match_site list) =
@@ -381,7 +381,7 @@ module Checkers = struct
           evidence = Printf.sprintf "match in '%s' has %d branches" ms.Source_file.ms_fn_name branch_count;
           threshold = "match_branches > 10";
           confidence = 1.0;
-          suggested_refactoring = Printf.sprintf "reforge plan decompose-match %s %s" file ms.Source_file.ms_fn_name;
+          suggested_refactoring = Printf.sprintf "kiss33 plan decompose-match %s %s" file ms.Source_file.ms_fn_name;
         }) matches
 
   let check_type_defs ~file ~emit (type_defs : Source_file.type_def list) =
@@ -426,7 +426,7 @@ module Checkers = struct
           evidence = Printf.sprintf "literal %S repeated %d times in %s" lit_str (List.length locs) file;
           threshold = thresh;
           confidence = confidence_normal;
-          suggested_refactoring = Printf.sprintf "reforge plan extract-constant %s %S <CONST_NAME>" file lit_str;
+          suggested_refactoring = Printf.sprintf "kiss33 plan extract-constant %s %S <CONST_NAME>" file lit_str;
         }
     | _ -> ()
 

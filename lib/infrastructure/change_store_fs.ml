@@ -1,13 +1,13 @@
 (* Filesystem change store: plans, application records and content backups
-   under [.reforge/] at the repository root.
+   under [.kiss33/] at the repository root.
 
    Plan files are immutable once written; status is derived from the
    presence of application records. Backups keep the exact pre-application
    content of every file an application modified. *)
 
-open Reforge_domain
+open Kiss33_domain
 
-module Change_store_fs : Reforge_ports.Change_store.S = struct
+module Change_store_fs : Kiss33_ports.Change_store.S = struct
   type t = { root : string }
 
   let ext_json = ".json"
@@ -22,10 +22,10 @@ module Change_store_fs : Reforge_ports.Change_store.S = struct
   let key_edits = "edits"
   let key_content = "content"
 
-  let reforge_dir t = Filename.concat t.root ".reforge"
-  let plans_dir t = Filename.concat (reforge_dir t) "plans"
-  let applied_dir t = Filename.concat (reforge_dir t) "applied"
-  let backup_dir t plan_id = Filename.concat (reforge_dir t) ("backup/" ^ plan_id)
+  let kiss33_dir t = Filename.concat t.root ".kiss33"
+  let plans_dir t = Filename.concat (kiss33_dir t) "plans"
+  let applied_dir t = Filename.concat (kiss33_dir t) "applied"
+  let backup_dir t plan_id = Filename.concat (kiss33_dir t) ("backup/" ^ plan_id)
 
   let to_abs path =
     if Filename.is_relative path then Filename.concat (Sys.getcwd ()) path else path
@@ -53,7 +53,7 @@ module Change_store_fs : Reforge_ports.Change_store.S = struct
                     (Printf.sprintf "mkdir %s: %s %s %s" p (Unix.error_message e) f a))
         else Ok ()
     in
-    let dirs = [ reforge_dir t; plans_dir t; applied_dir t ] in
+    let dirs = [ kiss33_dir t; plans_dir t; applied_dir t ] in
     List.fold_left
       (fun acc d -> match acc with Error e -> Error e | Ok () -> mkdir d)
       (Ok ()) dirs
@@ -164,7 +164,7 @@ module Change_store_fs : Reforge_ports.Change_store.S = struct
   let json_of_plan (p : Change_plan.t) : Yojson.Basic.t =
     `Assoc
       [
-        ("reforge_version", `String p.Change_plan.cp_version);
+        ("kiss33_version", `String p.Change_plan.cp_version);
         ("id", `String p.Change_plan.cp_id);
         ("created_at", `String p.Change_plan.cp_created_at);
         ("description", `String p.Change_plan.cp_description);
@@ -196,7 +196,7 @@ module Change_store_fs : Reforge_ports.Change_store.S = struct
                   cp_preconditions = List.map (function Ok p -> p | Error _ -> assert false) pres;
                   cp_warnings =
                     j |> member "warnings" |> to_list |> List.map to_string;
-                  cp_version = j |> member "reforge_version" |> to_string;
+                  cp_version = j |> member "kiss33_version" |> to_string;
                 })
     with
     | Type_error (msg, _) -> Error ("plan field: " ^ msg)
@@ -415,11 +415,11 @@ module Change_store_fs : Reforge_ports.Change_store.S = struct
     match ensure_dirs t with
     | Error e -> Error e
     | Ok () -> (
-        let path = Filename.concat (reforge_dir t) "config.json" in
+        let path = Filename.concat (kiss33_dir t) "config.json" in
         let oc = open_out_bin path in
         output_string oc json;
         close_out oc;
         Ok ())
 end
 
-let change_store_fs = (module Change_store_fs : Reforge_ports.Change_store.S)
+let change_store_fs = (module Change_store_fs : Kiss33_ports.Change_store.S)

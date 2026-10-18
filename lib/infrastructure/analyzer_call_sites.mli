@@ -1,6 +1,6 @@
 (** AST visitor helpers for call sites and literals. *)
 
-open Reforge_domain
+open Kiss33_domain
 
 val literal_of_constant : Parsetree.constant -> Source_file.literal_kind option
 

@@ -5,7 +5,7 @@
    are reported inside the returned values. Compiler-version-specific
    behavior is confined to implementations of this port. *)
 
-open Reforge_domain
+open Kiss33_domain
 module type S = sig
   type t
 

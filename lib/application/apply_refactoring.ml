@@ -8,7 +8,7 @@
    pre-plan state. Per-invariant, this is staged recovery, not atomic
    rollback. *)
 
-open Reforge_domain
+open Kiss33_domain
 
 let ( let* ) = Result.bind
 
@@ -26,7 +26,7 @@ let pp_failure = function
   | Store m -> "change store failure: " ^ m
 
 let check_exists_precondition (type a)
-    (module Fs : Reforge_ports.Filesystem.S with type t = a) (fs_t : a) path hash =
+    (module Fs : Kiss33_ports.Filesystem.S with type t = a) (fs_t : a) path hash =
   match Fs.file_stat fs_t ~rel:path with
   | Ok (_, h) when h = hash -> None
   | Ok (_, h) ->
@@ -34,7 +34,7 @@ let check_exists_precondition (type a)
   | Error _ -> Some (Printf.sprintf "%s no longer exists" path)
 
 let check_single_precondition (type a)
-    (module Fs : Reforge_ports.Filesystem.S with type t = a) (fs_t : a) = function
+    (module Fs : Kiss33_ports.Filesystem.S with type t = a) (fs_t : a) = function
   | Change_plan.Pre_exists { path; hash } ->
       check_exists_precondition (module Fs) fs_t path hash
   | Change_plan.Pre_absent { path } ->
@@ -43,7 +43,7 @@ let check_single_precondition (type a)
       else None
 
 let check_preconditions (type a)
-    (module Fs : Reforge_ports.Filesystem.S with type t = a) (fs_t : a)
+    (module Fs : Kiss33_ports.Filesystem.S with type t = a) (fs_t : a)
     (preconditions : Change_plan.precondition list) : (unit, failure) result =
   let violations =
     List.filter_map (check_single_precondition (module Fs) fs_t) preconditions
@@ -61,7 +61,7 @@ let move_src_of (ops : Change_plan.op list) (path : string) : string =
   Option.value ~default:path found
 
 let backup_of_op (type a)
-    (module Fs : Reforge_ports.Filesystem.S with type t = a) (fs_t : a)
+    (module Fs : Kiss33_ports.Filesystem.S with type t = a) (fs_t : a)
     ~move_src_of = function
   | Change_plan.Op_edit_file { path; _ } ->
       let read_path = move_src_of path in
@@ -71,7 +71,7 @@ let backup_of_op (type a)
   | _ -> None
 
 let gather_backups (type a)
-    (module Fs : Reforge_ports.Filesystem.S with type t = a) (fs_t : a)
+    (module Fs : Kiss33_ports.Filesystem.S with type t = a) (fs_t : a)
     (ops : Change_plan.op list) : ((string * string) list, failure) result =
   let results =
     List.filter_map
@@ -107,7 +107,7 @@ type file_edit = {
 }
 
 let read_and_verify_hash (type a)
-    (module Fs : Reforge_ports.Filesystem.S with type t = a) (fs_t : a)
+    (module Fs : Kiss33_ports.Filesystem.S with type t = a) (fs_t : a)
     read_path expected_hash =
   match Fs.read fs_t ~rel:read_path with
   | Error e -> Error (Io (Printf.sprintf "read %s: %s" read_path e))
@@ -129,7 +129,7 @@ let compute_and_verify_new_content path content edits expected_result_hash =
                      post expected_result_hash))
 
 let write_and_record (type a)
-    (module Fs : Reforge_ports.Filesystem.S with type t = a) (fs_t : a)
+    (module Fs : Kiss33_ports.Filesystem.S with type t = a) (fs_t : a)
     ~journal (fe : file_edit) post new_content =
   match Fs.write_atomic fs_t ~rel:fe.path ~content:new_content with
   | Ok () ->
@@ -138,7 +138,7 @@ let write_and_record (type a)
   | Error e -> Error (Io (Printf.sprintf "write %s: %s" fe.path e))
 
 let apply_file_edit (type a)
-    (module Fs : Reforge_ports.Filesystem.S with type t = a) (fs_t : a)
+    (module Fs : Kiss33_ports.Filesystem.S with type t = a) (fs_t : a)
     ~read_path ~journal (fe : file_edit) : (unit, failure) result =
   let* content = read_and_verify_hash (module Fs) fs_t read_path fe.original_hash in
   let* new_content, post =
@@ -147,28 +147,28 @@ let apply_file_edit (type a)
   write_and_record (module Fs) fs_t ~journal fe post new_content
 
 let execute_create_dir (type a)
-    (module Fs : Reforge_ports.Filesystem.S with type t = a) (fs_t : a)
+    (module Fs : Kiss33_ports.Filesystem.S with type t = a) (fs_t : a)
     ~journal path =
   match Fs.mkdir_p fs_t ~rel:path with
   | Ok () -> journal.dirs := path :: !(journal.dirs); Ok ()
   | Error e -> Error (Io (Printf.sprintf "mkdir %s: %s" path e))
 
 let execute_move (type a)
-    (module Fs : Reforge_ports.Filesystem.S with type t = a) (fs_t : a)
+    (module Fs : Kiss33_ports.Filesystem.S with type t = a) (fs_t : a)
     ~journal src dst hash =
   match Fs.move fs_t ~src ~dst with
   | Ok () -> journal.moved := (src, dst, hash) :: !(journal.moved); Ok ()
   | Error e -> Error (Io (Printf.sprintf "move %s: %s" src e))
 
 let execute_write (type a)
-    (module Fs : Reforge_ports.Filesystem.S with type t = a) (fs_t : a)
+    (module Fs : Kiss33_ports.Filesystem.S with type t = a) (fs_t : a)
     ~journal path content =
   match Fs.write_atomic fs_t ~rel:path ~content with
   | Ok () -> journal.written := path :: !(journal.written); Ok ()
   | Error e -> Error (Io (Printf.sprintf "write %s: %s" path e))
 
 let execute_op (type a)
-    (module Fs : Reforge_ports.Filesystem.S with type t = a) (fs_t : a)
+    (module Fs : Kiss33_ports.Filesystem.S with type t = a) (fs_t : a)
     ~ops ~journal (op : Change_plan.op) : (unit, failure) result =
   match op with
   | Change_plan.Op_create_dir { path } ->
@@ -195,7 +195,7 @@ let build_applied (plan : Change_plan.t) (journal : journal) now status =
   }
 
 let record_outcome (type a)
-    (module St : Reforge_ports.Change_store.S with type t = a) (store_t : a)
+    (module St : Kiss33_ports.Change_store.S with type t = a) (store_t : a)
     (plan : Change_plan.t) (applied : Change_plan.applied) backups =
   match St.record_applied store_t ~plan ~applied ~backups with
   | Error e -> prerr_endline ("warning: could not record application: " ^ e)
@@ -210,10 +210,10 @@ let rec run_all_ops execute_fn finish = function
           let _ = finish Change_plan.Failed in
           Error e)
 
-let apply ~(rt : Reforge_ports.Runtime.t) ~root ~(plan : Change_plan.t) () :
+let apply ~(rt : Kiss33_ports.Runtime.t) ~root ~(plan : Change_plan.t) () :
     (Change_plan.applied, failure) result =
-  let module Fs = (val rt.Reforge_ports.Runtime.filesystem) in
-  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let module Fs = (val rt.Kiss33_ports.Runtime.filesystem) in
+  let module St = (val rt.Kiss33_ports.Runtime.store) in
   let* fs_t =
     match Fs.create ~root with Ok t -> Ok t | Error e -> Error (Io e)
   in

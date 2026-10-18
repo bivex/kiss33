@@ -1,4 +1,4 @@
-(* Change plans: the unit of mutation in reforge. *)
+(* Change plans: the unit of mutation in kiss33. *)
 
 type edit = {
   e_start_off : int;

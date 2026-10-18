@@ -1,4 +1,4 @@
-(* Change plans: the unit of mutation in reforge.
+(* Change plans: the unit of mutation in kiss33.
 
    A plan is a deterministic, ordered list of operations plus the
    preconditions that must hold for it to be applicable. Plans are pure

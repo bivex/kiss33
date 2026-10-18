@@ -1,6 +1,6 @@
 (* AST visitor helpers for type declarations, extensions and exceptions. *)
 
-open Reforge_domain
+open Kiss33_domain
 open Analyzer_loc
 
 let ctor_locs (cs : Parsetree.constructor_declaration list) : (string * Source_file.loc) list =

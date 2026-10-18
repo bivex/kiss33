@@ -1,7 +1,7 @@
 (* Build runner adapter: runs a command with both output streams captured
    to a temporary file, so the caller cannot deadlock on pipe buffers. *)
 
-module Dune_runner : Reforge_ports.Build_runner.S = struct
+module Dune_runner : Kiss33_ports.Build_runner.S = struct
   type t = unit
 
   let create () = ()
@@ -10,7 +10,7 @@ module Dune_runner : Reforge_ports.Build_runner.S = struct
     if cmd = [] then Error "empty command"
     else begin
       let line = String.concat " " (List.map Filename.quote cmd) in
-      let out_file = Filename.temp_file "reforge-build" ".out" in
+      let out_file = Filename.temp_file "kiss33-build" ".out" in
       let shell =
         Printf.sprintf "cd %s && %s > %s 2>&1" (Filename.quote cwd) line
           (Filename.quote out_file)
@@ -27,4 +27,4 @@ module Dune_runner : Reforge_ports.Build_runner.S = struct
     end
 end
 
-let dune_runner = (module Dune_runner : Reforge_ports.Build_runner.S)
+let dune_runner = (module Dune_runner : Kiss33_ports.Build_runner.S)

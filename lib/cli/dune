@@ -1,5 +1,5 @@
 (include_subdirs unqualified)
 (library
- (name reforge_cli)
- (libraries reforge_app reforge_ports reforge_domain cmdliner yojson)
+ (name kiss33_cli)
+ (libraries kiss33_app kiss33_ports kiss33_domain cmdliner yojson)
  (flags (:standard -w -70)))

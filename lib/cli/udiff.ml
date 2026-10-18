@@ -4,7 +4,7 @@
    them instead of running a diff algorithm — previews show exactly the
    splices the apply step will perform. *)
 
-open Reforge_domain
+open Kiss33_domain
 
 let split_lines (s : string) : string array =
   let lines = String.split_on_char '\n' s in

@@ -1,7 +1,7 @@
 (* Port: persistence of change plans, application records and backups,
-   under [.reforge/] at the repository root. *)
+   under [.kiss33/] at the repository root. *)
 
-open Reforge_domain
+open Kiss33_domain
 module type S = sig
   type t
 
@@ -29,7 +29,7 @@ module type S = sig
     backups:(string * string) list ->
     (unit, string) result
   (** Persist the application record and backup file contents under
-      [.reforge/backup/<id>/...]. Backups map post-move paths to their
+      [.kiss33/backup/<id>/...]. Backups map post-move paths to their
       pre-application content. *)
 
   val load_applied : t -> plan_id:string -> (Change_plan.applied, string) result

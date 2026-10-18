@@ -1,4 +1,4 @@
-open Reforge_domain
+open Kiss33_domain
 
 (* ------------------------------------------------------------------ *)
 (* 1. Path utilities                                                  *)
@@ -28,7 +28,7 @@ let test_path () =
 (* ------------------------------------------------------------------ *)
 
 let test_source_analyzer () =
-  let module An = (val Reforge_infra.Ocaml_analyzer.ocaml_analyzer) in
+  let module An = (val Kiss33_infra.Ocaml_analyzer.ocaml_analyzer) in
   let an = An.create () in
   let content =
     "module M = struct\n  let x = 1\n  module Sub = struct let y = 2 end\nend\nopen M\nlet z = M.Sub.y + 1\n"
@@ -53,7 +53,7 @@ let test_source_analyzer () =
   Alcotest.(check (list string)) "value defs" [ "z" ] fn_names
 
 let test_function_analyzer () =
-  let module An = (val Reforge_infra.Ocaml_analyzer.ocaml_analyzer) in
+  let module An = (val Kiss33_infra.Ocaml_analyzer.ocaml_analyzer) in
   let an = An.create () in
   let ml_content =
     "let f x ~y ?(z = 0) = x + y + z\nlet rec g y = if y <= 0 then 0 else g (y - 1)\nlet a, b = (1, 2)\n"
@@ -78,7 +78,7 @@ let test_function_analyzer () =
   Alcotest.(check (list string)) "f val arrow params" [ ""; "y"; "z" ] f_val_params
 
 let test_dune_analyzer () =
-  let module An = (val Reforge_infra.Ocaml_analyzer.ocaml_analyzer) in
+  let module An = (val Kiss33_infra.Ocaml_analyzer.ocaml_analyzer) in
   let an = An.create () in
   let content =
     "(library\n (name my_lib)\n (modules foo bar)\n (wrapped false))\n(include_subdirs qualified)\n"
@@ -216,16 +216,16 @@ let test_change_plan_overlapping () =
 (* 5. End-to-end plan, apply, validate, undo                          *)
 (* ------------------------------------------------------------------ *)
 
-let runtime : Reforge_ports.Runtime.t =
+let runtime : Kiss33_ports.Runtime.t =
   {
-    filesystem = Reforge_infra.Filesystem_unix.filesystem_unix;
-    analyzer = Reforge_infra.Ocaml_analyzer.ocaml_analyzer;
-    build = Reforge_infra.Dune_runner.dune_runner;
-    store = Reforge_infra.Change_store_fs.change_store_fs;
+    filesystem = Kiss33_infra.Filesystem_unix.filesystem_unix;
+    analyzer = Kiss33_infra.Ocaml_analyzer.ocaml_analyzer;
+    build = Kiss33_infra.Dune_runner.dune_runner;
+    store = Kiss33_infra.Change_store_fs.change_store_fs;
   }
 
 let make_scratch_repo () =
-  let tmp = Filename.temp_file "reforge_test_" "" in
+  let tmp = Filename.temp_file "kiss33_test_" "" in
   Sys.remove tmp;
   Unix.mkdir tmp 0o755;
   Unix.mkdir (Filename.concat tmp "bin") 0o755;
@@ -250,7 +250,7 @@ let test_e2e_refactoring () =
 
   (* 1. Plan move lib/util.ml -> lib/greet.ml *)
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_move ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_move ~rt:runtime ~config ~root
       ~src:"lib/util.ml" ~dst:"lib/greet.ml" ~semantic:true ()
   in
   match plan_res with
@@ -270,9 +270,9 @@ let test_e2e_refactoring () =
         (List.mem ("lib/util.mli", "lib/greet.mli") moves);
 
       (* 2. Apply plan *)
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
        | Error err ->
-           Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+           Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
        | Ok applied ->
            Alcotest.(check bool) "status applied" true
              (applied.Change_plan.ap_status = Change_plan.Applied);
@@ -293,14 +293,14 @@ let test_e2e_refactoring () =
              (try ignore (String.index dune_content 'g'); true with Not_found -> false);
 
            (* 3. Validate *)
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> c.Reforge_app.Validate_changes.c_name = "parse-check (3 files)") checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+                let parse_check = List.find (fun c -> c.Kiss33_app.Validate_changes.c_name = "parse-check (3 files)") checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
 
            (* 4. Undo *)
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok log ->
                 Alcotest.(check bool) "undo has actions" true (List.length log > 0);
@@ -314,7 +314,7 @@ let test_stale_plan_rejection () =
   let root = make_scratch_repo () in
   let config = Config.default in
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_move ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_move ~rt:runtime ~config ~root
       ~src:"lib/util.ml" ~dst:"lib/greet.ml" ~semantic:true ()
   in
   match plan_res with
@@ -325,9 +325,9 @@ let test_stale_plan_rejection () =
       let oc = open_out_bin p in
       output_string oc "let hello () = \"changed!\"\n";
       close_out oc;
-      match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-      | Error (Reforge_app.Apply_refactoring.Stale _) -> () (* Expected! *)
-      | Error e -> Alcotest.fail ("expected Stale error, got: " ^ Reforge_app.Apply_refactoring.pp_failure e)
+      match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+      | Error (Kiss33_app.Apply_refactoring.Stale _) -> () (* Expected! *)
+      | Error e -> Alcotest.fail ("expected Stale error, got: " ^ Kiss33_app.Apply_refactoring.pp_failure e)
       | Ok _ -> Alcotest.fail "apply succeeded despite stale precondition"
 
 let test_e2e_rename_fn () =
@@ -342,7 +342,7 @@ let test_e2e_rename_fn () =
 
   (* 1. Plan rename-fn lib/util.ml hello greet_msg *)
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_rename_fn ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_rename_fn ~rt:runtime ~config ~root
       ~file:"lib/util.ml" ~old_name:"hello" ~new_name:"greet_msg" ()
   in
   match plan_res with
@@ -360,8 +360,8 @@ let test_e2e_rename_fn () =
         [ "bin/main.ml"; "lib/util.ml"; "lib/util.mli" ] edited_files;
 
       (* 2. Apply *)
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
        | Ok applied ->
            Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
            let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -374,14 +374,14 @@ let test_e2e_rename_fn () =
              (try ignore (String.index main_c 'g'); true with Not_found -> false);
 
            (* 3. Validate *)
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
 
            (* 4. Undo *)
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok log ->
                 Alcotest.(check bool) "undo has actions" true (List.length log > 0);
@@ -405,15 +405,15 @@ let test_e2e_move_fn () =
 
   (* 1. Plan move-fn lib/util.ml lib/extra.ml hello *)
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_move_fn ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_move_fn ~rt:runtime ~config ~root
       ~src:"lib/util.ml" ~dst:"lib/extra.ml" ~fn_name:"hello" ()
   in
   match plan_res with
   | Error e -> Alcotest.fail ("plan_move_fn failed: " ^ e)
   | Ok (plan, _path) ->
       (* 2. Apply *)
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
        | Ok applied ->
            Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
            let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -429,14 +429,14 @@ let test_e2e_move_fn () =
              (try ignore (String.index main_c 'E'); true with Not_found -> false);
 
            (* 3. Validate *)
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
 
            (* 4. Undo *)
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok log ->
                 Alcotest.(check bool) "undo has actions" true (List.length log > 0);
@@ -448,17 +448,17 @@ let test_fn_refactoring_errors () =
   let config = Config.default in
 
   (* Fn not found *)
-  (match Reforge_app.Plan_refactoring.plan_rename_fn ~rt:runtime ~config ~root ~file:"lib/util.ml" ~old_name:"no_such_fn" ~new_name:"foo" () with
+  (match Kiss33_app.Plan_refactoring.plan_rename_fn ~rt:runtime ~config ~root ~file:"lib/util.ml" ~old_name:"no_such_fn" ~new_name:"foo" () with
    | Error msg -> Alcotest.(check bool) "error has not found" true (String.starts_with ~prefix:"function 'no_such_fn' not found" msg)
    | Ok _ -> Alcotest.fail "expected error for non-existent function");
 
   (* Invalid name *)
-  (match Reforge_app.Plan_refactoring.plan_rename_fn ~rt:runtime ~config ~root ~file:"lib/util.ml" ~old_name:"hello" ~new_name:"InvalidCapital" () with
+  (match Kiss33_app.Plan_refactoring.plan_rename_fn ~rt:runtime ~config ~root ~file:"lib/util.ml" ~old_name:"hello" ~new_name:"InvalidCapital" () with
    | Error msg -> Alcotest.(check bool) "error has invalid name" true (String.starts_with ~prefix:"invalid OCaml identifier" msg)
    | Ok _ -> Alcotest.fail "expected error for invalid function name");
 
   (* Move src = dst *)
-  (match Reforge_app.Plan_refactoring.plan_move_fn ~rt:runtime ~config ~root ~src:"lib/util.ml" ~dst:"lib/util.ml" ~fn_name:"hello" () with
+  (match Kiss33_app.Plan_refactoring.plan_move_fn ~rt:runtime ~config ~root ~src:"lib/util.ml" ~dst:"lib/util.ml" ~fn_name:"hello" () with
    | Error msg -> Alcotest.(check bool) "error src=dst" true (String.starts_with ~prefix:"source and destination are the same" msg)
    | Ok _ -> Alcotest.fail "expected error for src=dst")
 
@@ -473,29 +473,29 @@ let test_e2e_rename_arg_positional () =
 
   (* 1. Plan rename-arg lib/util.ml add a x *)
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_rename_arg ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_rename_arg ~rt:runtime ~config ~root
       ~file:"lib/util.ml" ~fn_name:"add" ~old_arg:"a" ~new_arg:"x" ()
   in
   match plan_res with
   | Error e -> Alcotest.fail ("plan_rename_arg failed: " ^ e)
   | Ok (plan, _path) ->
       (* 2. Apply *)
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
        | Ok applied ->
            Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
            let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
            Alcotest.(check string) "util.ml rewritten" "let add x b = x + b + x\n" util_c;
 
            (* 3. Validate *)
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
 
            (* 4. Undo *)
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok _ ->
                 let restored = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -517,7 +517,7 @@ let test_e2e_rename_arg_labelled () =
 
   (* 1. Plan rename-arg lib/util.ml greet name person *)
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_rename_arg ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_rename_arg ~rt:runtime ~config ~root
       ~file:"lib/util.ml" ~fn_name:"greet" ~old_arg:"name" ~new_arg:"person" ()
   in
   match plan_res with
@@ -535,8 +535,8 @@ let test_e2e_rename_arg_labelled () =
         [ "bin/main.ml"; "lib/util.ml"; "lib/util.mli" ] edited_files;
 
       (* 2. Apply *)
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
        | Ok applied ->
            Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
            let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -547,14 +547,14 @@ let test_e2e_rename_arg_labelled () =
            Alcotest.(check bool) "main.ml uses person" true (try ignore (String.index main_c 'p'); true with Not_found -> false);
 
            (* 3. Validate *)
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
 
            (* 4. Undo *)
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok _ ->
                 let restored_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -576,15 +576,15 @@ let test_e2e_remove_arg () =
 
   (* 1. Plan remove-arg lib/util.ml compute unused *)
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_remove_arg ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_remove_arg ~rt:runtime ~config ~root
       ~file:"lib/util.ml" ~fn_name:"compute" ~arg_name:"unused" ()
   in
   match plan_res with
   | Error e -> Alcotest.fail ("plan_remove_arg failed: " ^ e)
   | Ok (plan, _path) ->
       (* 2. Apply *)
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
        | Ok applied ->
            Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
            let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -595,14 +595,14 @@ let test_e2e_remove_arg () =
            Alcotest.(check string) "main.ml removed call arg" "let () = print_int (Sample_lib.Util.compute 10)\n" main_c;
 
            (* 3. Validate *)
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
 
            (* 4. Undo *)
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok _ ->
                 let restored_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -613,7 +613,7 @@ let test_arg_refactoring_errors () =
   let config = Config.default in
 
   (* Arg not found *)
-  (match Reforge_app.Plan_refactoring.plan_rename_arg ~rt:runtime ~config ~root ~file:"lib/util.ml" ~fn_name:"hello" ~old_arg:"no_such" ~new_arg:"foo" () with
+  (match Kiss33_app.Plan_refactoring.plan_rename_arg ~rt:runtime ~config ~root ~file:"lib/util.ml" ~fn_name:"hello" ~old_arg:"no_such" ~new_arg:"foo" () with
    | Error msg -> Alcotest.(check bool) "error has not found" true (String.starts_with ~prefix:"argument 'no_such' not found" msg)
    | Ok _ -> Alcotest.fail "expected error for non-existent argument");
 
@@ -622,7 +622,7 @@ let test_arg_refactoring_errors () =
   let oc = open_out_bin p in
   output_string oc "let greet name = \"Hello \" ^ name\n";
   close_out oc;
-  (match Reforge_app.Plan_refactoring.plan_remove_arg ~rt:runtime ~config ~root ~file:"lib/util.ml" ~fn_name:"greet" ~arg_name:"name" () with
+  (match Kiss33_app.Plan_refactoring.plan_remove_arg ~rt:runtime ~config ~root ~file:"lib/util.ml" ~fn_name:"greet" ~arg_name:"name" () with
    | Error msg -> Alcotest.(check bool) "error has in use" true (String.starts_with ~prefix:"cannot remove argument 'name'" msg)
    | Ok _ -> Alcotest.fail "expected error removing argument in use")
 
@@ -643,12 +643,12 @@ let test_e2e_label_arg () =
   output_string oc "let () = print_endline (Sample_lib.Util.greet \"Hello\" \"World\")\n";
   close_out oc;
 
-  match Reforge_app.Plan_refactoring.plan_label_arg ~rt:runtime ~config ~root
+  match Kiss33_app.Plan_refactoring.plan_label_arg ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"greet" ~arg_name:"prefix" ~label:"prefix" () with
   | Error e -> Alcotest.fail ("planning failed: " ^ e)
   | Ok (plan, _) ->
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error e -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure e)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error e -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure e)
        | Ok _ ->
            let new_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
            let new_mli = In_channel.with_open_bin (Filename.concat root "lib/util.mli") In_channel.input_all in
@@ -657,13 +657,13 @@ let test_e2e_label_arg () =
            Alcotest.(check string) "util.mli labeled" "val greet : prefix:string -> string -> string\n" new_mli;
            Alcotest.(check string) "main.ml call site labeled" "let () = print_endline (Sample_lib.Util.greet ~prefix:\"Hello\" \"World\")\n" new_main;
 
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
 
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok _ ->
                 let restored_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -681,12 +681,12 @@ let test_e2e_label_arg_punned () =
   output_string oc "let () = let prefix = \"Hi\" in print_endline (Sample_lib.Util.greet prefix \"World\")\n";
   close_out oc;
 
-  match Reforge_app.Plan_refactoring.plan_label_arg ~rt:runtime ~config ~root
+  match Kiss33_app.Plan_refactoring.plan_label_arg ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"greet" ~arg_name:"prefix" ~label:"prefix" () with
   | Error e -> Alcotest.fail ("planning failed: " ^ e)
   | Ok (plan, _) ->
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error e -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure e)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error e -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure e)
        | Ok _ ->
            let new_main = In_channel.with_open_bin (Filename.concat root "bin/main.ml") In_channel.input_all in
            Alcotest.(check string) "main.ml punned label" "let () = let prefix = \"Hi\" in print_endline (Sample_lib.Util.greet ~prefix \"World\")\n" new_main)
@@ -699,23 +699,23 @@ let test_e2e_extract_constant () =
   output_string oc "let msg1 () = \"Hello, world!\"\nlet msg2 () = \"Hello, world!\"\n";
   close_out oc;
 
-  match Reforge_app.Plan_refactoring.plan_extract_constant ~rt:runtime ~config ~root
+  match Kiss33_app.Plan_refactoring.plan_extract_constant ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~literal:"\"Hello, world!\"" ~const_name:"greeting" () with
   | Error e -> Alcotest.fail ("planning failed: " ^ e)
   | Ok (plan, _) ->
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error e -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure e)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error e -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure e)
        | Ok _ ->
            let new_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
            Alcotest.(check string) "util.ml with constant" "let greeting = \"Hello, world!\"\n\nlet msg1 () = greeting\nlet msg2 () = greeting\n" new_util;
 
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
 
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok _ ->
                 let restored_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -730,25 +730,25 @@ let test_extract_constant_errors () =
   close_out oc;
 
   (* Collision with existing definition *)
-  (match Reforge_app.Plan_refactoring.plan_extract_constant ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_extract_constant ~rt:runtime ~config ~root
            ~file:"lib/util.ml" ~literal:"\"Foo\"" ~const_name:"existing_val" () with
    | Error msg -> Alcotest.(check bool) "error has collision" true (String.starts_with ~prefix:"constant 'existing_val' already exists" msg)
    | Ok _ -> Alcotest.fail "expected error for duplicate constant name");
 
   (* Literal not found *)
-  (match Reforge_app.Plan_refactoring.plan_extract_constant ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_extract_constant ~rt:runtime ~config ~root
            ~file:"lib/util.ml" ~literal:"\"Non_existent\"" ~const_name:"fresh_const" () with
    | Error msg -> Alcotest.(check bool) "error has not found" true (String.starts_with ~prefix:"literal \"Non_existent\" not found" msg)
    | Ok _ -> Alcotest.fail "expected error for non-existent literal");
 
   (* Invalid constant identifier *)
-  (match Reforge_app.Plan_refactoring.plan_extract_constant ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_extract_constant ~rt:runtime ~config ~root
            ~file:"lib/util.ml" ~literal:"\"Foo\"" ~const_name:"BadName" () with
    | Error msg -> Alcotest.(check bool) "error has invalid name" true (String.starts_with ~prefix:"invalid OCaml identifier for constant" msg)
    | Ok _ -> Alcotest.fail "expected error for invalid constant identifier")
 
 let test_type_analyzer () =
-  let module An = (val Reforge_infra.Ocaml_analyzer.ocaml_analyzer) in
+  let module An = (val Kiss33_infra.Ocaml_analyzer.ocaml_analyzer) in
   let an = An.create () in
   let ml_content =
     "type color = Red | Green | Blue\n\
@@ -790,7 +790,7 @@ let test_type_analyzer () =
   Alcotest.(check bool) "uses color as type" true (has_type_ref "color")
 
 let test_local_open_context () =
-  let module An = (val Reforge_infra.Ocaml_analyzer.ocaml_analyzer) in
+  let module An = (val Kiss33_infra.Ocaml_analyzer.ocaml_analyzer) in
   let an = An.create () in
   let content = "let x = let open Sys in getenv \"HOME\"\nopen List\nlet y = length [ 1 ]\n" in
   let a = An.analyze an ~path:"lib/foo.ml" ~content in
@@ -819,7 +819,7 @@ let test_e2e_unlabel_arg () =
   write "lib/util.mli" "val greet : prefix:string -> string -> string\n";
   write "bin/main.ml" "let () = print_endline (Sample_lib.Util.greet ~prefix:\"Hello\" \"World\")\n";
 
-  match Reforge_app.Plan_refactoring.plan_unlabel_arg ~rt:runtime ~config ~root
+  match Kiss33_app.Plan_refactoring.plan_unlabel_arg ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"greet" ~label:"prefix" () with
   | Error e -> Alcotest.fail ("plan_unlabel_arg failed: " ^ e)
   | Ok (plan, _) -> (
@@ -832,8 +832,8 @@ let test_e2e_unlabel_arg () =
         |> List.sort compare
       in
       Alcotest.(check (list string)) "edited files" [ "bin/main.ml"; "lib/util.ml"; "lib/util.mli" ] edited_files;
-      match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-      | Error e -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure e)
+      match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+      | Error e -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure e)
       | Ok _ ->
           let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
           let mli_c = In_channel.with_open_bin (Filename.concat root "lib/util.mli") In_channel.input_all in
@@ -843,13 +843,13 @@ let test_e2e_unlabel_arg () =
           Alcotest.(check string) "main.ml positional"
             "let () = print_endline (Sample_lib.Util.greet \"Hello\" \"World\")\n" main_c;
 
-          (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+          (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
            | Error e -> Alcotest.fail ("validate failed: " ^ e)
            | Ok checks ->
-               let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-               Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+               let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+               Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
 
-          (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+          (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
            | Error e -> Alcotest.fail ("undo failed: " ^ e)
            | Ok _ ->
                let restored = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -868,12 +868,12 @@ let test_e2e_unlabel_arg_punned () =
   write "lib/util.ml" "let greet ~prefix name = prefix ^ \" \" ^ name\n";
   write "bin/main.ml" "let () = let prefix = \"Hi\" in print_endline (Sample_lib.Util.greet ~prefix \"World\")\n";
 
-  match Reforge_app.Plan_refactoring.plan_unlabel_arg ~rt:runtime ~config ~root
+  match Kiss33_app.Plan_refactoring.plan_unlabel_arg ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"greet" ~label:"prefix" () with
   | Error e -> Alcotest.fail ("plan_unlabel_arg failed: " ^ e)
   | Ok (plan, _) -> (
-      match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-      | Error e -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure e)
+      match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+      | Error e -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure e)
       | Ok _ ->
           let main_c = In_channel.with_open_bin (Filename.concat root "bin/main.ml") In_channel.input_all in
           Alcotest.(check string) "punned label unlabelled"
@@ -888,7 +888,7 @@ let test_unlabel_arg_errors () =
   let oc = open_out_bin p in
   output_string oc "let add a b = a + b\n";
   close_out oc;
-  (match Reforge_app.Plan_refactoring.plan_unlabel_arg ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_unlabel_arg ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"add" ~label:"a" () with
    | Error msg -> Alcotest.(check bool) "error not labelled" true (String.starts_with ~prefix:"argument 'a' of function add" msg)
    | Ok _ -> Alcotest.fail "expected error for positional parameter");
@@ -897,7 +897,7 @@ let test_unlabel_arg_errors () =
   let oc = open_out_bin p in
   output_string oc "let opt ?mode x = match mode with Some m -> x + m | None -> x\n";
   close_out oc;
-  (match Reforge_app.Plan_refactoring.plan_unlabel_arg ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_unlabel_arg ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"opt" ~label:"mode" () with
    | Error msg -> Alcotest.(check bool) "error optional unsafe" true (String.starts_with ~prefix:"cannot unlabel optional argument 'mode'" msg)
    | Ok _ -> Alcotest.fail "expected error for optional parameter");
@@ -906,7 +906,7 @@ let test_unlabel_arg_errors () =
   let oc = open_out_bin p in
   output_string oc "let mix a ~b c = a + b + c\nlet run () = mix ~b:1 2 3\n";
   close_out oc;
-  (match Reforge_app.Plan_refactoring.plan_unlabel_arg ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_unlabel_arg ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"mix" ~label:"b" () with
    | Error msg -> Alcotest.(check bool) "error call order" true (String.starts_with ~prefix:"cannot unlabel 'b' in mix" msg)
    | Ok _ -> Alcotest.fail "expected error for out-of-order call site")
@@ -925,7 +925,7 @@ let test_e2e_rename_type () =
   write "lib/util.mli" "type token = Word of string | Eof\nval peek : token -> string\n";
   write "bin/main.ml" "let describe (t : Sample_lib.Util.token) = Sample_lib.Util.peek t\n";
 
-  match Reforge_app.Plan_refactoring.plan_rename_type ~rt:runtime ~config ~root
+  match Kiss33_app.Plan_refactoring.plan_rename_type ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~old_name:"token" ~new_name:"lexeme" () with
   | Error e -> Alcotest.fail ("plan_rename_type failed: " ^ e)
   | Ok (plan, _) -> (
@@ -940,8 +940,8 @@ let test_e2e_rename_type () =
       Alcotest.(check (list string)) "edited files" [ "bin/main.ml"; "lib/util.ml"; "lib/util.mli" ] edited_files;
       Alcotest.(check bool) "warns about constructors" true
         (List.exists (fun w -> String.length w > 0) plan.cp_warnings);
-      match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-      | Error e -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure e)
+      match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+      | Error e -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure e)
       | Ok _ ->
           let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
           let mli_c = In_channel.with_open_bin (Filename.concat root "lib/util.mli") In_channel.input_all in
@@ -953,13 +953,13 @@ let test_e2e_rename_type () =
           Alcotest.(check string) "main.ml renamed"
             "let describe (t : Sample_lib.Util.lexeme) = Sample_lib.Util.peek t\n" main_c;
 
-          (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+          (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
            | Error e -> Alcotest.fail ("validate failed: " ^ e)
            | Ok checks ->
-               let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-               Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+               let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+               Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
 
-          (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+          (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
            | Error e -> Alcotest.fail ("undo failed: " ^ e)
            | Ok _ ->
                let restored = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -976,19 +976,19 @@ let test_rename_type_errors () =
   close_out oc;
 
   (* Type not found *)
-  (match Reforge_app.Plan_refactoring.plan_rename_type ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_rename_type ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~old_name:"nope" ~new_name:"thing" () with
    | Error msg -> Alcotest.(check bool) "error not found" true (String.starts_with ~prefix:"type 'nope' not found" msg)
    | Ok _ -> Alcotest.fail "expected error for unknown type");
 
   (* Collision with existing type *)
-  (match Reforge_app.Plan_refactoring.plan_rename_type ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_rename_type ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~old_name:"token" ~new_name:"token" () with
    | Error msg -> Alcotest.(check bool) "error same name" true (String.starts_with ~prefix:"source and destination are the same" msg)
    | Ok _ -> Alcotest.fail "expected error for same name");
 
   (* Invalid type identifier *)
-  (match Reforge_app.Plan_refactoring.plan_rename_type ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_rename_type ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~old_name:"token" ~new_name:"BadName" () with
    | Error msg -> Alcotest.(check bool) "error invalid name" true (String.starts_with ~prefix:"invalid OCaml type identifier" msg)
    | Ok _ -> Alcotest.fail "expected error for invalid type name")
@@ -1009,7 +1009,7 @@ let test_e2e_remove_unused_opens () =
   write "lib/util.ml" "open Helper\nopen Kids\nlet value () = play () + 1\n";
   write "lib/util.mli" "val value : unit -> int\n";
 
-  match Reforge_app.Plan_refactoring.plan_remove_unused_opens ~rt:runtime ~config ~root
+  match Kiss33_app.Plan_refactoring.plan_remove_unused_opens ~rt:runtime ~config ~root
           ~file:"lib/util.ml" () with
   | Error e -> Alcotest.fail ("plan_remove_unused_opens failed: " ^ e)
   | Ok (plan, _) -> (
@@ -1019,20 +1019,20 @@ let test_e2e_remove_unused_opens () =
            Alcotest.(check string) "edits util.ml" "lib/util.ml" path;
            Alcotest.(check int) "one open dropped" 1 (List.length edits)
        | _ -> Alcotest.fail "expected a single edit_file op");
-      match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-      | Error e -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure e)
+      match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+      | Error e -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure e)
       | Ok _ ->
           let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
           Alcotest.(check string) "unused open dropped, used open kept"
             "open Kids\nlet value () = play () + 1\n" util_c;
 
-          (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+          (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
            | Error e -> Alcotest.fail ("validate failed: " ^ e)
            | Ok checks ->
-               let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-               Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+               let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+               Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
 
-          (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+          (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
            | Error e -> Alcotest.fail ("undo failed: " ^ e)
            | Ok _ ->
                let restored = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -1049,7 +1049,7 @@ let test_remove_unused_opens_keeps_unresolvable () =
   output_string oc "open Some_external_lib\nlet hello () = \"world\"\n";
   close_out oc;
 
-  match Reforge_app.Plan_refactoring.plan_remove_unused_opens ~rt:runtime ~config ~root
+  match Kiss33_app.Plan_refactoring.plan_remove_unused_opens ~rt:runtime ~config ~root
           ~file:"lib/util.ml" () with
   | Error msg -> Alcotest.(check bool) "no removable opens" true (String.starts_with ~prefix:"no unused opens found" msg)
   | Ok (plan, _) ->
@@ -1062,7 +1062,7 @@ let test_remove_unused_opens_errors () =
   let config = Config.default in
 
   (* No opens at all *)
-  (match Reforge_app.Plan_refactoring.plan_remove_unused_opens ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_remove_unused_opens ~rt:runtime ~config ~root
           ~file:"lib/util.ml" () with
    | Error msg -> Alcotest.(check bool) "error no opens" true (String.starts_with ~prefix:"no unused opens found" msg)
    | Ok _ -> Alcotest.fail "expected error when there is nothing to remove");
@@ -1077,7 +1077,7 @@ let test_remove_unused_opens_errors () =
   write "lib/dune" "(library (name sample_lib) (modules util helper))\n";
   write "lib/helper.ml" "let assist () = 1\n";
   write "lib/util.ml" "open Helper\nlet value () = assist ()\n";
-  (match Reforge_app.Plan_refactoring.plan_remove_unused_opens ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_remove_unused_opens ~rt:runtime ~config ~root
           ~file:"lib/util.ml" () with
    | Error msg -> Alcotest.(check bool) "error all used" true (String.starts_with ~prefix:"no unused opens found" msg)
    | Ok _ -> Alcotest.fail "expected error when every open is used")
@@ -1097,7 +1097,7 @@ let test_e2e_introduce_param_object_positional () =
   write "bin/main.ml" "let run () = Sample_lib.Util.area 0 0 100 200\n";
 
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
       ~file:"lib/util.ml" ~fn_name:"area" ~args:[ "w"; "h" ] ~record_name:"dims" ()
   in
   match plan_res with
@@ -1113,8 +1113,8 @@ let test_e2e_introduce_param_object_positional () =
       in
       Alcotest.(check (list string)) "edited files" [ "bin/main.ml"; "lib/util.ml"; "lib/util.mli" ] edited_files;
 
-      match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-      | Error e -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure e)
+      match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+      | Error e -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure e)
       | Ok _ ->
           let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
           let mli_c = In_channel.with_open_bin (Filename.concat root "lib/util.mli") In_channel.input_all in
@@ -1126,13 +1126,13 @@ let test_e2e_introduce_param_object_positional () =
           Alcotest.(check string) "main.ml rewritten"
             "let run () = Sample_lib.Util.area 0 0 { w = 100; h = 200 }\n" main_c;
 
-          (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+          (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
            | Error e -> Alcotest.fail ("validate failed: " ^ e)
            | Ok checks ->
-               let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-               Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+               let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+               Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
 
-          (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+          (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
            | Error e -> Alcotest.fail ("undo failed: " ^ e)
            | Ok _ ->
                let restored = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -1153,14 +1153,14 @@ let test_e2e_introduce_param_object_labelled_punned () =
   write "bin/main.ml" "let draw () =\n  let width = 10 in\n  let height = 20 in\n  Sample_lib.Util.render ~color:0 ~width ~height\n";
 
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
       ~file:"lib/util.ml" ~fn_name:"render" ~args:[ "width"; "height" ] ~record_name:"box" ()
   in
   match plan_res with
   | Error e -> Alcotest.fail ("plan_introduce_param_object failed: " ^ e)
   | Ok (plan, _path) -> (
-      match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-      | Error e -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure e)
+      match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+      | Error e -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure e)
       | Ok _ ->
           let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
           let mli_c = In_channel.with_open_bin (Filename.concat root "lib/util.mli") In_channel.input_all in
@@ -1172,11 +1172,11 @@ let test_e2e_introduce_param_object_labelled_punned () =
           Alcotest.(check string) "main.ml rewritten with punning"
             "let draw () =\n  let width = 10 in\n  let height = 20 in\n  Sample_lib.Util.render ~color:0 { width; height }\n" main_c;
 
-          (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+          (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
            | Error e -> Alcotest.fail ("validate failed: " ^ e)
            | Ok checks ->
-               let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-               Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed))
+               let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+               Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed))
 
 let test_e2e_introduce_param_object_no_mli () =
   let root = make_scratch_repo () in
@@ -1193,7 +1193,7 @@ let test_e2e_introduce_param_object_no_mli () =
   (try Sys.remove (Filename.concat root "lib/util.mli") with Sys_error _ -> ());
 
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
       ~file:"lib/util.ml" ~fn_name:"pair" ~args:[ "a"; "b" ] ~record_name:"pair_t" ()
   in
   match plan_res with
@@ -1202,8 +1202,8 @@ let test_e2e_introduce_param_object_no_mli () =
       Alcotest.(check bool) "warns about polymorphic fields" true
         (List.exists (fun w -> String.starts_with ~prefix:"no interface for" w) plan.cp_warnings);
 
-      match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-      | Error e -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure e)
+      match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+      | Error e -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure e)
       | Ok _ ->
           let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
           Alcotest.(check string) "util.ml rewritten polymorphic"
@@ -1222,46 +1222,46 @@ let test_introduce_param_object_errors () =
   write "lib/util.ml" "let area x y w h = w * h\n";
 
   (* Non-contiguous parameters *)
-  (match Reforge_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"area" ~args:[ "x"; "w" ] ~record_name:"dims" () with
    | Error msg -> Alcotest.(check bool) "error not contiguous" true (String.starts_with ~prefix:"arguments w, x of function area" msg)
    | Ok _ -> Alcotest.fail "expected error for non-contiguous args");
 
   (* Missing parameter *)
-  (match Reforge_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"area" ~args:[ "w"; "z" ] ~record_name:"dims" () with
    | Error msg -> Alcotest.(check bool) "error arg not found" true (String.starts_with ~prefix:"argument 'z' not found" msg)
    | Ok _ -> Alcotest.fail "expected error for unknown arg");
 
   (* Mixed kinds (positional + labelled) *)
   write "lib/mixed.ml" "let f x ~y = x + y\n";
-  (match Reforge_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
           ~file:"lib/mixed.ml" ~fn_name:"f" ~args:[ "x"; "y" ] ~record_name:"rec_t" () with
    | Error msg -> Alcotest.(check bool) "error mixed kinds" true (String.starts_with ~prefix:"cannot group x, y in function f" msg)
    | Ok _ -> Alcotest.fail "expected error for mixed kinds");
 
   (* Optional parameter *)
   write "lib/opt.ml" "let f ?(x = 0) y = x + y\n";
-  (match Reforge_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
           ~file:"lib/opt.ml" ~fn_name:"f" ~args:[ "x"; "y" ] ~record_name:"rec_t" () with
    | Error msg -> Alcotest.(check bool) "error optional arg" true (String.starts_with ~prefix:"cannot group optional argument 'x'" msg)
    | Ok _ -> Alcotest.fail "expected error for optional arg");
 
   (* Record collision *)
   write "lib/coll.ml" "type dims = A\nlet f w h = w * h\n";
-  (match Reforge_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
           ~file:"lib/coll.ml" ~fn_name:"f" ~args:[ "w"; "h" ] ~record_name:"dims" () with
    | Error msg -> Alcotest.(check bool) "error collision" true (String.starts_with ~prefix:"type 'dims' already exists" msg)
    | Ok _ -> Alcotest.fail "expected error for record collision");
 
   (* Invalid type identifier *)
-  (match Reforge_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"area" ~args:[ "w"; "h" ] ~record_name:"Dims" () with
    | Error msg -> Alcotest.(check bool) "error invalid name" true (String.starts_with ~prefix:"invalid OCaml type identifier" msg)
    | Ok _ -> Alcotest.fail "expected error for invalid type name");
 
   (* Empty arg group *)
-  (match Reforge_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"area" ~args:[] ~record_name:"dims" () with
    | Error msg -> Alcotest.(check bool) "error empty args" true (String.starts_with ~prefix:"no arguments given" msg)
    | Ok _ -> Alcotest.fail "expected error for empty args")
@@ -1295,15 +1295,15 @@ let test_e2e_extract_fn () =
 
   (* Extract lines 3-5 into helper calc *)
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_extract_fn ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_extract_fn ~rt:runtime ~config ~root
       ~file:"lib/util.ml" ~range:"3-5" ~new_fn_name:"calc" ()
   in
   match plan_res with
   | Error e -> Alcotest.fail ("plan_extract_fn failed: " ^ e)
   | Ok (plan, _path) ->
       Alcotest.(check int) "one op" 1 (List.length plan.cp_ops);
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
        | Ok applied ->
            Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
            let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -1312,12 +1312,12 @@ let test_e2e_extract_fn () =
            Alcotest.(check bool) "calc takes free vars" true
              (str_contains util_c "let calc" && (str_contains util_c "calc b x" || str_contains util_c "calc x b"));
 
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok _ ->
                 let restored = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -1336,25 +1336,25 @@ let test_extract_fn_errors () =
   write "lib/util.ml" "let f x = x + 1\n";
 
   (* Missing file *)
-  (match Reforge_app.Plan_refactoring.plan_extract_fn ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_extract_fn ~rt:runtime ~config ~root
           ~file:"lib/missing.ml" ~range:"1" ~new_fn_name:"foo" () with
    | Error msg -> Alcotest.(check bool) "error missing" true (String.starts_with ~prefix:"source not found" msg)
    | Ok _ -> Alcotest.fail "expected error for missing file");
 
   (* Range out of bounds *)
-  (match Reforge_app.Plan_refactoring.plan_extract_fn ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_extract_fn ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~range:"10-20" ~new_fn_name:"foo" () with
    | Error msg -> Alcotest.(check bool) "error out of bounds" true (String.starts_with ~prefix:"range" msg)
    | Ok _ -> Alcotest.fail "expected error for out of bounds range");
 
   (* Invalid fn name *)
-  (match Reforge_app.Plan_refactoring.plan_extract_fn ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_extract_fn ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~range:"1" ~new_fn_name:"Foo" () with
    | Error msg -> Alcotest.(check bool) "error invalid name" true (String.starts_with ~prefix:"invalid OCaml identifier" msg)
    | Ok _ -> Alcotest.fail "expected error for invalid ident");
 
   (* Collision *)
-  (match Reforge_app.Plan_refactoring.plan_extract_fn ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_extract_fn ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~range:"1" ~new_fn_name:"f" () with
    | Error msg -> Alcotest.(check bool) "error collision" true (String.starts_with ~prefix:"function 'f' already exists" msg)
    | Ok _ -> Alcotest.fail "expected error for collision")
@@ -1375,25 +1375,25 @@ let test_e2e_decompose_match () =
   write "lib/eval.ml" orig_code;
 
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_decompose_match ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_decompose_match ~rt:runtime ~config ~root
       ~file:"lib/eval.ml" ~fn_name:"eval" ()
   in
   match plan_res with
   | Error e -> Alcotest.fail ("plan_decompose_match failed: " ^ e)
   | Ok (plan, _path) ->
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
        | Ok applied ->
            Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
            let eval_c = In_channel.with_open_bin (Filename.concat root "lib/eval.ml") In_channel.input_all in
            Alcotest.(check bool) "contains handle_eval_lit" true (str_contains eval_c "handle_eval_lit");
            Alcotest.(check bool) "contains handle_eval_var" true (str_contains eval_c "handle_eval_var");
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok _ ->
                 let restored = In_channel.with_open_bin (Filename.concat root "lib/eval.ml") In_channel.input_all in
@@ -1413,19 +1413,19 @@ let test_decompose_match_errors () =
   write "lib/rec.ml" "let rec run n = match n with | 0 -> 0 | k -> run (k - 1)\n";
 
   (* Missing function *)
-  (match Reforge_app.Plan_refactoring.plan_decompose_match ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_decompose_match ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"missing" () with
    | Error msg -> Alcotest.(check bool) "error fn not found" true (String.starts_with ~prefix:"function 'missing' not found" msg)
    | Ok _ -> Alcotest.fail "expected error for missing function");
 
   (* No match in function *)
-  (match Reforge_app.Plan_refactoring.plan_decompose_match ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_decompose_match ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"f" () with
    | Error msg -> Alcotest.(check bool) "error no match" true (String.starts_with ~prefix:"no match expression found" msg)
    | Ok _ -> Alcotest.fail "expected error for no match");
 
   (* Recursive call in branch *)
-  (match Reforge_app.Plan_refactoring.plan_decompose_match ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_decompose_match ~rt:runtime ~config ~root
           ~file:"lib/rec.ml" ~fn_name:"run" () with
    | Error msg -> Alcotest.(check bool) "error recursive branch" true (String.starts_with ~prefix:"cannot decompose match in 'run'" msg)
    | Ok _ -> Alcotest.fail "expected error for recursive branch")
@@ -1445,15 +1445,15 @@ let test_e2e_inline_fn () =
   write "bin/main.ml" "let () = print_int (Sample_lib.Util.sq (3 + 1))\n";
 
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_inline_fn ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_inline_fn ~rt:runtime ~config ~root
       ~file:"lib/util.ml" ~fn_name:"sq" ()
   in
   match plan_res with
   | Error e -> Alcotest.fail ("plan_inline_fn failed: " ^ e)
   | Ok (plan, _path) ->
       Alcotest.(check int) "3 files touched" 3 (List.length plan.cp_ops);
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
        | Ok applied ->
            Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
            let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -1463,12 +1463,12 @@ let test_e2e_inline_fn () =
            Alcotest.(check bool) "double kept in util.ml" true (str_contains util_c "let double");
            Alcotest.(check bool) "sq deleted from util.mli" false (str_contains mli_c "val sq");
            Alcotest.(check bool) "inlined in main.ml" true (str_contains main_c "((3 + 1) * (3 + 1))");
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok _ ->
                 let restored_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -1487,13 +1487,13 @@ let test_inline_fn_errors () =
   write "lib/util.ml" "let rec fact n = if n <= 1 then 1 else n * fact (n - 1)\n";
 
   (* Missing function *)
-  (match Reforge_app.Plan_refactoring.plan_inline_fn ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_inline_fn ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"missing" () with
    | Error msg -> Alcotest.(check bool) "error fn not found" true (String.starts_with ~prefix:"function 'missing' not found" msg)
    | Ok _ -> Alcotest.fail "expected error for missing function");
 
   (* Recursive function *)
-  (match Reforge_app.Plan_refactoring.plan_inline_fn ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_inline_fn ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"fact" () with
    | Error msg -> Alcotest.(check bool) "error recursive fn" true (String.starts_with ~prefix:"cannot inline recursive function" msg)
    | Ok _ -> Alcotest.fail "expected error for recursive function")
@@ -1525,15 +1525,15 @@ let test_e2e_rename_field () =
        get_x p + p.x\n";
 
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_rename_field ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_rename_field ~rt:runtime ~config ~root
       ~file:"lib/util.ml" ~type_name:"point" ~old_field:"x" ~new_field:"x_coord" ()
   in
   match plan_res with
   | Error e -> Alcotest.fail ("plan_rename_field failed: " ^ e)
   | Ok (plan, _path) ->
       Alcotest.(check int) "3 files touched" 3 (List.length plan.cp_ops);
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
        | Ok applied ->
            Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
            let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -1545,12 +1545,12 @@ let test_e2e_rename_field () =
            Alcotest.(check bool) "punned pattern expanded in util.ml" true (str_contains util_c "{ x_coord = x; y }");
            Alcotest.(check bool) "type decl updated in util.mli" true (str_contains mli_c "type point = { x_coord : int; y : int }");
            Alcotest.(check bool) "field access updated in main.ml" true (str_contains main_c "p.x_coord");
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok _ ->
                 let restored_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -1569,25 +1569,25 @@ let test_rename_field_errors () =
   write "lib/util.ml" "type point = { x : int; y : int }\n";
 
   (* Field not found *)
-  (match Reforge_app.Plan_refactoring.plan_rename_field ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_rename_field ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~type_name:"point" ~old_field:"z" ~new_field:"depth" () with
    | Error msg -> Alcotest.(check bool) "error field not found" true (String.starts_with ~prefix:"field 'z' not found" msg)
    | Ok _ -> Alcotest.fail "expected error for unknown field");
 
   (* Field collision *)
-  (match Reforge_app.Plan_refactoring.plan_rename_field ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_rename_field ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~type_name:"point" ~old_field:"x" ~new_field:"y" () with
    | Error msg -> Alcotest.(check bool) "error collision" true (String.starts_with ~prefix:"field 'y' already exists" msg)
    | Ok _ -> Alcotest.fail "expected error for field collision");
 
   (* Invalid field name *)
-  (match Reforge_app.Plan_refactoring.plan_rename_field ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_rename_field ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~type_name:"point" ~old_field:"x" ~new_field:"BadName" () with
    | Error msg -> Alcotest.(check bool) "error invalid field" true (String.starts_with ~prefix:"invalid OCaml record field identifier" msg)
    | Ok _ -> Alcotest.fail "expected error for invalid field name");
 
   (* Same name *)
-  (match Reforge_app.Plan_refactoring.plan_rename_field ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_rename_field ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~type_name:"point" ~old_field:"x" ~new_field:"x" () with
    | Error msg -> Alcotest.(check bool) "error same name" true (String.starts_with ~prefix:"source and destination are the same" msg)
    | Ok _ -> Alcotest.fail "expected error for same name")
@@ -1617,15 +1617,15 @@ let test_e2e_rename_constructor () =
        | _ -> false\n";
 
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_rename_constructor ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_rename_constructor ~rt:runtime ~config ~root
       ~file:"lib/util.ml" ~type_name:"color" ~old_ctor:"Red" ~new_ctor:"Crimson" ()
   in
   match plan_res with
   | Error e -> Alcotest.fail ("plan_rename_constructor failed: " ^ e)
   | Ok (plan, _path) ->
       Alcotest.(check int) "3 files touched" 3 (List.length plan.cp_ops);
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
        | Ok applied ->
            Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
            let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -1636,12 +1636,12 @@ let test_e2e_rename_constructor () =
            Alcotest.(check bool) "expr updated in util.ml" true (str_contains util_c "let make_red () = Crimson");
            Alcotest.(check bool) "decl updated in util.mli" true (str_contains mli_c "Crimson | Green of int | Blue");
            Alcotest.(check bool) "ref updated in main.ml" true (str_contains main_c "Sample_lib.Util.Crimson -> true");
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok _ ->
                 let restored_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -1660,19 +1660,19 @@ let test_rename_constructor_errors () =
   write "lib/util.ml" "type color = Red | Green\n";
 
   (* Constructor not found *)
-  (match Reforge_app.Plan_refactoring.plan_rename_constructor ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_rename_constructor ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~type_name:"color" ~old_ctor:"Blue" ~new_ctor:"Azure" () with
    | Error msg -> Alcotest.(check bool) "error ctor not found" true (String.starts_with ~prefix:"constructor 'Blue' not found" msg)
    | Ok _ -> Alcotest.fail "expected error for unknown constructor");
 
   (* Constructor collision *)
-  (match Reforge_app.Plan_refactoring.plan_rename_constructor ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_rename_constructor ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~type_name:"color" ~old_ctor:"Red" ~new_ctor:"Green" () with
    | Error msg -> Alcotest.(check bool) "error collision" true (String.starts_with ~prefix:"constructor 'Green' already exists" msg)
    | Ok _ -> Alcotest.fail "expected error for constructor collision");
 
   (* Invalid constructor name (lowercase) *)
-  (match Reforge_app.Plan_refactoring.plan_rename_constructor ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_rename_constructor ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~type_name:"color" ~old_ctor:"Red" ~new_ctor:"crimson" () with
    | Error msg -> Alcotest.(check bool) "error invalid ctor" true (String.starts_with ~prefix:"invalid OCaml constructor identifier" msg)
    | Ok _ -> Alcotest.fail "expected error for lowercase constructor name")
@@ -1682,15 +1682,15 @@ let test_e2e_rename_module_file () =
   let config = Config.default in
 
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_rename_module ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_rename_module ~rt:runtime ~config ~root
       ~old_name:"Util" ~new_name:"Helper" ()
   in
   match plan_res with
   | Error e -> Alcotest.fail ("plan_rename_module failed: " ^ e)
   | Ok (plan, _path) ->
       Alcotest.(check bool) "plan description" true (str_contains plan.cp_description "rename module Util -> Helper");
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
        | Ok applied ->
            Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
            Alcotest.(check bool) "helper.ml exists" true (Sys.file_exists (Filename.concat root "lib/helper.ml"));
@@ -1698,12 +1698,12 @@ let test_e2e_rename_module_file () =
            Alcotest.(check bool) "util.ml removed" false (Sys.file_exists (Filename.concat root "lib/util.ml"));
            let main_c = In_channel.with_open_bin (Filename.concat root "bin/main.ml") In_channel.input_all in
            Alcotest.(check bool) "main.ml references Helper" true (str_contains main_c "Sample_lib.Helper.hello");
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok _ ->
                 Alcotest.(check bool) "util.ml restored" true (Sys.file_exists (Filename.concat root "lib/util.ml"));
@@ -1728,15 +1728,15 @@ let test_e2e_rename_module_submodule () =
     "let run x = Sample_lib.Util.Math.double x\n";
 
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_rename_module ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_rename_module ~rt:runtime ~config ~root
       ~file:"lib/util.ml" ~old_name:"Math" ~new_name:"Arithmetic" ()
   in
   match plan_res with
   | Error e -> Alcotest.fail ("plan_rename_module submodule failed: " ^ e)
   | Ok (plan, _path) ->
       Alcotest.(check int) "2 files touched" 2 (List.length plan.cp_ops);
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
        | Ok applied ->
            Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
            let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -1744,12 +1744,12 @@ let test_e2e_rename_module_submodule () =
            Alcotest.(check bool) "submodule decl updated in util.ml" true (str_contains util_c "module Arithmetic = struct");
            Alcotest.(check bool) "submodule call updated in util.ml" true (str_contains util_c "Arithmetic.double x");
            Alcotest.(check bool) "external call updated in main.ml" true (str_contains main_c "Sample_lib.Util.Arithmetic.double x");
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok _ ->
                 let restored_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -1760,13 +1760,13 @@ let test_rename_module_errors () =
   let config = Config.default in
 
   (* Module not found *)
-  (match Reforge_app.Plan_refactoring.plan_rename_module ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_rename_module ~rt:runtime ~config ~root
           ~old_name:"NoSuchMod" ~new_name:"Other" () with
    | Error msg -> Alcotest.(check bool) "error mod not found" true (String.starts_with ~prefix:"module 'NoSuchMod' not found" msg)
    | Ok _ -> Alcotest.fail "expected error for unknown module");
 
   (* Invalid module name *)
-  (match Reforge_app.Plan_refactoring.plan_rename_module ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_rename_module ~rt:runtime ~config ~root
           ~old_name:"Util" ~new_name:"invalid_lowercase" () with
    | Error msg -> Alcotest.(check bool) "error invalid mod name" true (String.starts_with ~prefix:"invalid OCaml module identifier" msg)
    | Ok _ -> Alcotest.fail "expected error for lowercase module name")
@@ -1791,15 +1791,15 @@ let test_e2e_reorder_args () =
     "let test () = Sample_lib.Util.subtract 10 3\n";
 
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
       ~file:"lib/util.ml" ~fn_name:"subtract" ~new_order:[ "y"; "x" ] ()
   in
   match plan_res with
   | Error e -> Alcotest.fail ("plan_reorder_args failed: " ^ e)
   | Ok (plan, _path) ->
       Alcotest.(check int) "3 files touched" 3 (List.length plan.cp_ops);
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
        | Ok applied ->
            Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
            let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -1809,12 +1809,12 @@ let test_e2e_reorder_args () =
            Alcotest.(check bool) "call updated in util.ml" true (str_contains util_c "subtract b a");
            Alcotest.(check bool) "mli updated" true (str_contains mli_c "val subtract : int -> int -> int");
            Alcotest.(check bool) "main call updated" true (str_contains main_c "Sample_lib.Util.subtract 3 10");
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok _ ->
                 let restored_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -1838,43 +1838,43 @@ let test_reorder_args_errors () =
      let partial () = pair 1\n";
 
   (* Function not found *)
-  (match Reforge_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"no_such" ~new_order:[ "a"; "b" ] () with
    | Error msg -> Alcotest.(check bool) "error fn not found" true (String.starts_with ~prefix:"function 'no_such' not found" msg)
    | Ok _ -> Alcotest.fail "expected error for unknown function");
 
   (* Fewer than 2 arguments *)
-  (match Reforge_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"single" ~new_order:[ "x" ] () with
    | Error msg -> Alcotest.(check bool) "error fewer than 2" true (str_contains msg "has fewer than 2 arguments")
    | Ok _ -> Alcotest.fail "expected error for fewer than 2 arguments");
 
   (* Argument count mismatch *)
-  (match Reforge_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"pair" ~new_order:[ "a"; "b"; "c" ] () with
    | Error msg -> Alcotest.(check bool) "error count mismatch" true (str_contains msg "argument count mismatch")
    | Ok _ -> Alcotest.fail "expected error for count mismatch");
 
   (* Unknown argument name *)
-  (match Reforge_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"pair" ~new_order:[ "z"; "a" ] () with
    | Error msg -> Alcotest.(check bool) "error arg not found" true (str_contains msg "argument 'z' not found")
    | Ok _ -> Alcotest.fail "expected error for unknown arg");
 
   (* Duplicate argument name *)
-  (match Reforge_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"pair" ~new_order:[ "a"; "a" ] () with
    | Error msg -> Alcotest.(check bool) "error collision" true (str_contains msg "already exists")
    | Ok _ -> Alcotest.fail "expected error for duplicate arg");
 
   (* Same order *)
-  (match Reforge_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"pair" ~new_order:[ "a"; "b" ] () with
    | Error msg -> Alcotest.(check bool) "error same order" true (str_contains msg "source and destination are the same")
    | Ok _ -> Alcotest.fail "expected error for same order");
 
   (* Partial application at call site *)
-  (match Reforge_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_reorder_args ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"pair" ~new_order:[ "b"; "a" ] () with
    | Error msg -> Alcotest.(check bool) "error partial call" true (str_contains msg "partial application")
    | Ok _ -> Alcotest.fail "expected error for partial call site")
@@ -1896,26 +1896,26 @@ let test_e2e_remove_unused_fn () =
     "val alive_fn : int -> int\n";
 
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_remove_unused_fn ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_remove_unused_fn ~rt:runtime ~config ~root
       ~file:"lib/util.ml" ~fn_name:"unused_helper" ()
   in
   match plan_res with
   | Error e -> Alcotest.fail ("plan_remove_unused_fn failed: " ^ e)
   | Ok (plan, _path) ->
       Alcotest.(check int) "1 file touched" 1 (List.length plan.cp_ops);
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
        | Ok applied ->
            Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
            let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
            Alcotest.(check bool) "unused_helper removed" false (str_contains util_c "unused_helper");
            Alcotest.(check bool) "alive_fn preserved" true (str_contains util_c "let alive_fn x = x + 1");
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok _ ->
                 let restored_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
@@ -1940,19 +1940,19 @@ let test_remove_unused_fn_errors () =
     "let test () = Sample_lib.Util.alive 10\n";
 
   (* Exported in .mli *)
-  (match Reforge_app.Plan_refactoring.plan_remove_unused_fn ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_remove_unused_fn ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"alive" () with
    | Error msg -> Alcotest.(check bool) "error exported in mli" true (str_contains msg "it is exported in lib/util.mli")
    | Ok _ -> Alcotest.fail "expected error for exported function");
 
   (* Used internally in lib/util.ml *)
-  (match Reforge_app.Plan_refactoring.plan_remove_unused_fn ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_remove_unused_fn ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"helper" () with
    | Error msg -> Alcotest.(check bool) "error used internally" true (str_contains msg "it is referenced in lib/util.ml")
    | Ok _ -> Alcotest.fail "expected error for internally used function");
 
   (* Unknown function *)
-  (match Reforge_app.Plan_refactoring.plan_remove_unused_fn ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_remove_unused_fn ~rt:runtime ~config ~root
           ~file:"lib/util.ml" ~fn_name:"nonexistent" () with
    | Error msg -> Alcotest.(check bool) "error not found" true (str_contains msg "function 'nonexistent' not found")
    | Ok _ -> Alcotest.fail "expected error for unknown function")
@@ -1972,26 +1972,26 @@ let test_e2e_qualify_open () =
   write "lib/calc.ml" "open Sample_lib.Math\nlet test a = double a\n";
 
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_qualify_open ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_qualify_open ~rt:runtime ~config ~root
       ~file:"lib/calc.ml" ~mod_name:"Sample_lib.Math" ()
   in
   match plan_res with
   | Error e -> Alcotest.fail ("plan_qualify_open failed: " ^ e)
   | Ok (plan, _path) ->
       Alcotest.(check int) "1 file touched" 1 (List.length plan.cp_ops);
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
        | Ok applied ->
            Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
            let calc_c = In_channel.with_open_bin (Filename.concat root "lib/calc.ml") In_channel.input_all in
            Alcotest.(check bool) "open removed" false (str_contains calc_c "open Sample_lib.Math");
            Alcotest.(check bool) "call qualified" true (str_contains calc_c "Math.double a");
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok _ ->
                 let restored = In_channel.with_open_bin (Filename.concat root "lib/calc.ml") In_channel.input_all in
@@ -2011,27 +2011,27 @@ let test_e2e_wrap_primitive () =
   write "lib/user.mli" "val get_name : unit -> string\n";
 
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_wrap_primitive ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_wrap_primitive ~rt:runtime ~config ~root
       ~file:"lib/user.ml" ~type_name:"user_id" ~primitive:"string" ()
   in
   match plan_res with
   | Error e -> Alcotest.fail ("plan_wrap_primitive failed: " ^ e)
   | Ok (plan, _path) ->
       Alcotest.(check int) "2 files touched" 2 (List.length plan.cp_ops);
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
        | Ok applied ->
            Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
            let user_c = In_channel.with_open_bin (Filename.concat root "lib/user.ml") In_channel.input_all in
            let mli_c = In_channel.with_open_bin (Filename.concat root "lib/user.mli") In_channel.input_all in
            Alcotest.(check bool) "type in user.ml" true (str_contains user_c "type user_id = User_id of string");
            Alcotest.(check bool) "type in user.mli" true (str_contains mli_c "type user_id = User_id of string");
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok _ ->
                 let restored = In_channel.with_open_bin (Filename.concat root "lib/user.ml") In_channel.input_all in
@@ -2051,15 +2051,15 @@ let test_e2e_replace_exception_with_result () =
   write "lib/safe.mli" "val divide : int -> int -> int\n";
 
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_replace_exception_with_result ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_replace_exception_with_result ~rt:runtime ~config ~root
       ~file:"lib/safe.ml" ~fn_name:"divide" ()
   in
   match plan_res with
   | Error e -> Alcotest.fail ("plan_replace_exception_with_result failed: " ^ e)
   | Ok (plan, _path) ->
       Alcotest.(check int) "2 files touched" 2 (List.length plan.cp_ops);
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
        | Ok applied ->
            Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
            let safe_c = In_channel.with_open_bin (Filename.concat root "lib/safe.ml") In_channel.input_all in
@@ -2067,12 +2067,12 @@ let test_e2e_replace_exception_with_result () =
            Alcotest.(check bool) "Error returned in safe.ml" true (str_contains safe_c "Error \"division by zero\"");
            Alcotest.(check bool) "Ok returned in safe.ml" true (str_contains safe_c "Ok (a / b)");
            Alcotest.(check bool) "signature updated in safe.mli" true (str_contains mli_c "(int, string) result");
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok _ ->
                 let restored = In_channel.with_open_bin (Filename.concat root "lib/safe.ml") In_channel.input_all in
@@ -2092,15 +2092,15 @@ let test_e2e_extract_mli () =
   write "bin/main.ml" "let () = print_int (Sample_lib.Math.add 1 2)\n";
 
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_extract_mli ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_extract_mli ~rt:runtime ~config ~root
       ~file:"lib/math.ml" ()
   in
   match plan_res with
   | Error e -> Alcotest.fail ("plan_extract_mli failed: " ^ e)
   | Ok (plan, _path) ->
       Alcotest.(check int) "1 file written" 1 (List.length plan.cp_ops);
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
        | Ok applied ->
            Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
            let mli_path = Filename.concat root "lib/math.mli" in
@@ -2109,12 +2109,12 @@ let test_e2e_extract_mli () =
            Alcotest.(check bool) "type number exported" true (str_contains mli_c "type number");
            Alcotest.(check bool) "val add exported" true (str_contains mli_c "val add : int -> int -> int");
            Alcotest.(check bool) "internal_helper hidden" false (str_contains mli_c "internal_helper");
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok _ ->
                 Alcotest.(check bool) "math.mli removed on undo" false (Sys.file_exists mli_path)))
@@ -2133,27 +2133,27 @@ let test_e2e_sync_mli () =
   write "lib/service.mli" "val keep : 'a -> 'a\nval removed_fn : int -> int\n";
 
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_sync_mli ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_sync_mli ~rt:runtime ~config ~root
       ~file:"lib/service.ml" ()
   in
   match plan_res with
   | Error e -> Alcotest.fail ("plan_sync_mli failed: " ^ e)
   | Ok (plan, _path) ->
       Alcotest.(check int) "1 file edited" 1 (List.length plan.cp_ops);
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
        | Ok applied ->
            Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
            let mli_c = In_channel.with_open_bin (Filename.concat root "lib/service.mli") In_channel.input_all in
            Alcotest.(check bool) "val keep preserved" true (str_contains mli_c "val keep");
            Alcotest.(check bool) "removed_fn deleted" false (str_contains mli_c "removed_fn");
            Alcotest.(check bool) "added_fn added" true (str_contains mli_c "val added_fn : int -> int");
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok _ ->
                 let restored = In_channel.with_open_bin (Filename.concat root "lib/service.mli") In_channel.input_all in
@@ -2172,15 +2172,15 @@ let test_e2e_split_module () =
   write "lib/api.ml" "let fetch_data url = \"data\"\nlet parse_data raw = 42\nlet render view = \"html\"\n";
 
   let plan_res =
-    Reforge_app.Plan_refactoring.plan_split_module ~rt:runtime ~config ~root
+    Kiss33_app.Plan_refactoring.plan_split_module ~rt:runtime ~config ~root
       ~file:"lib/api.ml" ~submodule:"Fetcher" ~functions:[ "fetch_data"; "parse_data" ] ()
   in
   match plan_res with
   | Error e -> Alcotest.fail ("plan_split_module failed: " ^ e)
   | Ok (plan, _path) ->
       Alcotest.(check int) "1 file edited" 1 (List.length plan.cp_ops);
-      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+      (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
        | Ok applied ->
            Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
            let api_c = In_channel.with_open_bin (Filename.concat root "lib/api.ml") In_channel.input_all in
@@ -2189,12 +2189,12 @@ let test_e2e_split_module () =
            Alcotest.(check bool) "fetch_data alias present" true (str_contains api_c "let fetch_data = Fetcher.fetch_data");
            Alcotest.(check bool) "parse_data alias present" true (str_contains api_c "let parse_data = Fetcher.parse_data");
            Alcotest.(check bool) "render function preserved" true (str_contains api_c "let render view = \"html\"");
-           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+           (match Kiss33_app.Validate_changes.run ~rt:runtime ~config ~root () with
             | Error e -> Alcotest.fail ("validate failed: " ^ e)
             | Ok checks ->
-                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
-                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
-           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Kiss33_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Kiss33_app.Validate_changes.c_passed);
+           (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
             | Error e -> Alcotest.fail ("undo failed: " ^ e)
             | Ok _ ->
                 let restored = In_channel.with_open_bin (Filename.concat root "lib/api.ml") In_channel.input_all in
@@ -2213,7 +2213,7 @@ let test_smell_detection_functions () =
   (* Function with too many arguments and weak error model *)
   write "lib/bad_fn.ml" "let process a b c d e f = if a = 0 then failwith \"bad a\" else b + c + d + e + f\n";
 
-  match Reforge_app.Detect_smells.detect ~rt:runtime ~config ~root () with
+  match Kiss33_app.Detect_smells.detect ~rt:runtime ~config ~root () with
   | Error e -> Alcotest.fail ("detect failed: " ^ e)
   | Ok smells ->
       let has_too_many_args =
@@ -2242,7 +2242,7 @@ let test_smell_detection_modules () =
   in
   write "lib/large_api.ml" fns;
 
-  match Reforge_app.Detect_smells.detect ~rt:runtime ~config ~root () with
+  match Kiss33_app.Detect_smells.detect ~rt:runtime ~config ~root () with
   | Error e -> Alcotest.fail ("detect failed: " ^ e)
   | Ok smells ->
       let has_missing_mli =
@@ -2353,51 +2353,51 @@ let caller () =
    | _ -> Alcotest.fail "identity should have exactly 1 value parameter");
 
   (* 2. Test rename-fn on sum_pair -> add_pair *)
-  (match Reforge_app.Plan_refactoring.plan_rename_fn ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_rename_fn ~rt:runtime ~config ~root
            ~file:"lib/ocaml5_features.ml" ~old_name:"sum_pair" ~new_name:"add_pair" () with
    | Error e -> Alcotest.fail ("plan rename-fn sum_pair failed: " ^ e)
    | Ok (plan, _) ->
-       (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-        | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+        | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
         | Ok _ ->
             let content = In_channel.with_open_bin (Filename.concat root "lib/ocaml5_features.ml") In_channel.input_all in
             Alcotest.(check bool) "sum_pair renamed to add_pair" true (str_contains content "let add_pair (a, b) = a + b");
             Alcotest.(check bool) "call site updated" true (str_contains content "let s = add_pair (10, 20) in");
-            (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.Change_plan.cp_id () with
+            (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.Change_plan.cp_id () with
              | Error e -> Alcotest.fail ("undo failed: " ^ e)
              | Ok _ -> ())));
 
   (* 3. Test rename-fn on identity -> id_fn *)
-  (match Reforge_app.Plan_refactoring.plan_rename_fn ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_rename_fn ~rt:runtime ~config ~root
            ~file:"lib/ocaml5_features.ml" ~old_name:"identity" ~new_name:"id_fn" () with
    | Error e -> Alcotest.fail ("plan rename-fn identity failed: " ^ e)
    | Ok (plan, _) ->
-       (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-        | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+        | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
         | Ok _ ->
             let content = In_channel.with_open_bin (Filename.concat root "lib/ocaml5_features.ml") In_channel.input_all in
             Alcotest.(check bool) "identity renamed to id_fn" true (str_contains content "let id_fn (type a) (x : a) : a = x");
             Alcotest.(check bool) "call site updated" true (str_contains content "let i = id_fn 42 in");
-            (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.Change_plan.cp_id () with
+            (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.Change_plan.cp_id () with
              | Error e -> Alcotest.fail ("undo failed: " ^ e)
              | Ok _ -> ())));
 
   (* 4. Test rename-arg on identity parameter x -> item *)
-  (match Reforge_app.Plan_refactoring.plan_rename_arg ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_rename_arg ~rt:runtime ~config ~root
            ~file:"lib/ocaml5_features.ml" ~fn_name:"identity" ~old_arg:"x" ~new_arg:"item" () with
    | Error e -> Alcotest.fail ("plan rename-arg x -> item failed: " ^ e)
    | Ok (plan, _) ->
-       (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
-        | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       (match Kiss33_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+        | Error err -> Alcotest.fail ("apply failed: " ^ Kiss33_app.Apply_refactoring.pp_failure err)
         | Ok _ ->
             let content = In_channel.with_open_bin (Filename.concat root "lib/ocaml5_features.ml") In_channel.input_all in
             Alcotest.(check bool) "x renamed to item in def" true (str_contains content "let identity (type a) (item : a) : a = item");
-            (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.Change_plan.cp_id () with
+            (match Kiss33_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.Change_plan.cp_id () with
              | Error e -> Alcotest.fail ("undo failed: " ^ e)
              | Ok _ -> ())));
 
   (* 5. Verify attempting rename-arg on tuple pattern safely rejects *)
-  (match Reforge_app.Plan_refactoring.plan_rename_arg ~rt:runtime ~config ~root
+  (match Kiss33_app.Plan_refactoring.plan_rename_arg ~rt:runtime ~config ~root
            ~file:"lib/ocaml5_features.ml" ~fn_name:"sum_pair" ~old_arg:"a" ~new_arg:"x" () with
    | Error msg ->
        Alcotest.(check bool) "rejects rename-arg on tuple pattern" true
@@ -2499,7 +2499,7 @@ let pbt_change_plan_disjoint_edits =
 (* ------------------------------------------------------------------ *)
 
 let () =
-  Alcotest.run "reforge"
+  Alcotest.run "kiss33"
     [
       ("path", [ Alcotest.test_case "pure path operations" `Quick test_path ]);
       ( "analyzer",

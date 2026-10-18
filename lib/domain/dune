@@ -1,4 +1,4 @@
 (library
- (name reforge_domain))
+ (name kiss33_domain))
 
 (include_subdirs unqualified)

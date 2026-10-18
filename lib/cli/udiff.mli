@@ -1,4 +1,4 @@
-open Reforge_domain
+open Kiss33_domain
 
 val split_lines : string -> string array
 (** [split_lines s] splits string into lines preserving 1-based indexing without trailing empty line. *)

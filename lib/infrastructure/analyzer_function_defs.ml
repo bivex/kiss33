@@ -1,6 +1,6 @@
 (* AST visitor helpers for function definitions and val specifications. *)
 
-open Reforge_domain
+open Kiss33_domain
 open Analyzer_loc
 
 let rec extract_var (pat : Parsetree.pattern) : (string * Source_file.loc) option =
