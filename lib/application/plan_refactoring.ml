@@ -56,7 +56,7 @@ let plan_move ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root ~src ~d
   in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_move ~ctx ~src ~dst ~semantic with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -72,7 +72,7 @@ let plan_rename_fn ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
   in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_rename_fn ~ctx ~file ~old_name ~new_name with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -88,7 +88,7 @@ let plan_move_fn ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
   in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_move_fn ~ctx ~src ~dst ~fn_name with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -104,7 +104,7 @@ let plan_rename_arg ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
   in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_rename_arg ~ctx ~file ~fn_name ~old_arg ~new_arg with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -120,7 +120,7 @@ let plan_remove_arg ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
   in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_remove_arg ~ctx ~file ~fn_name ~arg_name with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -136,7 +136,7 @@ let plan_label_arg ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
   in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_label_arg ~ctx ~file ~fn_name ~arg_name ~label with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -152,7 +152,7 @@ let plan_extract_constant ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~
   in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_extract_constant ~ctx ~file ~literal ~const_name with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -168,7 +168,7 @@ let plan_unlabel_arg ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
   in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_unlabel_arg ~ctx ~file ~fn_name ~label with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -184,7 +184,7 @@ let plan_rename_type ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
   in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_rename_type ~ctx ~file ~old_name ~new_name with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -198,7 +198,7 @@ let plan_remove_unused_opens ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t
   let command = Printf.sprintf "reforge plan remove-unused-opens %s" file in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_remove_unused_opens ~ctx ~file with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -215,7 +215,7 @@ let plan_introduce_param_object ~(rt : Reforge_ports.Runtime.t) ~(config : Confi
   in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_introduce_param_object ~ctx ~file ~fn_name ~args ~record_name with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -231,7 +231,7 @@ let plan_extract_fn ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
   in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_extract_fn ~ctx ~file ~range ~new_fn_name with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -247,7 +247,7 @@ let plan_decompose_match ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~r
   in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_decompose_match ~ctx ~file ~fn_name with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -263,7 +263,7 @@ let plan_inline_fn ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
   in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_inline_fn ~ctx ~file ~fn_name with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -279,7 +279,7 @@ let plan_rename_field ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
   in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_rename_field ~ctx ~file ~type_name ~old_field ~new_field with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -295,7 +295,7 @@ let plan_rename_constructor ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t)
   in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_rename_constructor ~ctx ~file ~type_name ~old_ctor ~new_ctor with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -313,7 +313,7 @@ let plan_rename_module ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~roo
   in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_rename_module ~ctx ?file ~old_name ~new_name () with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -329,7 +329,7 @@ let plan_reorder_args ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
   in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_reorder_args ~ctx ~file ~fn_name ~new_order with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -343,7 +343,7 @@ let plan_remove_unused_fn ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~
   let command = Printf.sprintf "reforge plan remove-unused-fn %s %s" file fn_name in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_remove_unused_fn ~ctx ~file ~fn_name with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -357,7 +357,7 @@ let plan_qualify_open ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
   let command = Printf.sprintf "reforge plan qualify-open %s %s" file mod_name in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_qualify_open ~ctx ~file ~mod_name with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -371,7 +371,7 @@ let plan_wrap_primitive ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~ro
   let command = Printf.sprintf "reforge plan wrap-primitive %s %s %s" file type_name primitive in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_wrap_primitive ~ctx ~file ~type_name ~primitive with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -385,7 +385,7 @@ let plan_replace_exception_with_result ~(rt : Reforge_ports.Runtime.t) ~(config 
   let command = Printf.sprintf "reforge plan replace-exception-with-result %s %s" file fn_name in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_replace_exception_with_result ~ctx ~file ~fn_name with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -399,7 +399,7 @@ let plan_extract_mli ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
   let command = Printf.sprintf "reforge plan extract-mli %s" file in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_extract_mli ~ctx ~file with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -413,7 +413,7 @@ let plan_sync_mli ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
   let command = Printf.sprintf "reforge plan sync-mli %s" file in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_sync_mli ~ctx ~file with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e
@@ -430,7 +430,7 @@ let plan_split_module ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
   in
   let* ctx = make_ctx ~rt ~config ~root ~id ~command in
   match Refactoring.plan_split_module ~ctx ~file ~submodule ~functions with
-  | Error e -> Error (Refactoring.pe_message e)
+  | Error e -> Error (Refactoring.pe_formatted_message e)
   | Ok plan -> (
       match St.save_plan store_t plan with
       | Error e -> Error e

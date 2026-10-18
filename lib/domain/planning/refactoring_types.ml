@@ -265,6 +265,83 @@ let pe_message = function
   | Invalid_file_type f ->
       Printf.sprintf "file %s is not an OCaml implementation file (.ml)" f
 
+type error_category =
+  | Precondition_error
+  | Symbol_error
+  | Safety_violation
+
+let string_of_error_category = function
+  | Precondition_error -> "precondition error"
+  | Symbol_error -> "symbol error"
+  | Safety_violation -> "safety violation"
+
+let pe_category = function
+  | Src_not_found _ | Dst_exists _ | Dst_inside_src _ | Src_eq_dst
+  | Empty_move | Missing_content _ | Mli_already_exists _ | Mli_not_found _
+  | Invalid_file_type _ ->
+      Precondition_error
+  | Fn_not_found _ | Fn_collision _ | Invalid_fn_name _
+  | Arg_not_found _ | Arg_collision _ | Arg_already_labelled _ | Arg_not_labelled _
+  | Invalid_arg_name _ | Const_collision _ | Literal_not_found _ | Invalid_const_name _
+  | Type_not_found _ | Type_collision _ | Invalid_type_name _
+  | Field_not_found _ | Field_collision _ | Invalid_field_name _
+  | Ctor_not_found _ | Ctor_collision _ | Invalid_ctor_name _
+  | Module_not_found _ | Module_collision _ | Invalid_module_name _
+  | Ambiguous_module _ ->
+      Symbol_error
+  | Arg_in_use _ | Optional_unlabel_unsafe _ | Unsafe_call_order _
+  | Record_collision _ | Args_not_contiguous _ | Mixed_arg_kinds _
+  | Optional_group_arg _ | Arg_group_incomplete _ | Record_position_unsafe _
+  | Empty_arg_group | Invalid_range _ | Range_out_of_bounds _
+  | Empty_extracted_range _ | Invalid_extracted_expression _
+  | No_match_to_decompose _ | Recursive_match_branch _ | Recursive_fn_inline _
+  | No_function_body _ | No_unused_opens _ | Reorder_count_mismatch _
+  | Reorder_fewer_than_two_args _ | Partial_application_call _
+  | Fn_is_exported _ | Fn_in_use _ | Mutually_recursive_binding _
+  | No_exception_to_replace _ | No_functions_to_split _ ->
+      Safety_violation
+
+let pe_suggestion = function
+  | Fn_not_found (f, fn) ->
+      Some (Printf.sprintf "verify that '%s' is spelled correctly and defined at top-level in %s" fn f)
+  | Invalid_fn_name _ ->
+      Some "function names must start with a lowercase letter or underscore, e.g. 'my_func'"
+  | Arg_not_found (_, fn, _) ->
+      Some (Printf.sprintf "check the parameter list of %s; did you mean to prefix it with '~'?" fn)
+  | Invalid_arg_name _ ->
+      Some "parameter names must be valid lowercase OCaml identifiers, e.g. 'count' or '~count'"
+  | Invalid_type_name _ ->
+      Some "type identifiers must start with a lowercase letter or underscore, e.g. 'item_t'"
+  | Invalid_ctor_name _ ->
+      Some "variant constructor names must start with an uppercase letter, e.g. 'Active'"
+  | Invalid_module_name _ ->
+      Some "module names must start with an uppercase letter, e.g. 'Helpers'"
+  | Arg_in_use (_, _, arg) ->
+      Some (Printf.sprintf "to keep the parameter without compiler warnings, prefix it with '_%s', or remove its usages first" arg)
+  | Optional_unlabel_unsafe (_, fn, arg) ->
+      Some (Printf.sprintf "explicitly supply defaults for '?%s' at all call sites of %s before dropping the optional label" arg fn)
+  | Unsafe_call_order (label, fn, _) ->
+      Some (Printf.sprintf "labeled arguments in %s can be passed in any order, but positional arguments cannot; reorder call sites to match parameter order" fn)
+  | Recursive_fn_inline (_, fn) ->
+      Some (Printf.sprintf "inlining recursive function '%s' would cause infinite expansion; rewrite iteratively or extract non-recursive parts" fn)
+  | No_match_to_decompose (_, fn) ->
+      Some (Printf.sprintf "ensure the body of '%s' contains a top-level 'match ... with' expression" fn)
+  | Mli_already_exists p ->
+      Some (Printf.sprintf "use 'reforge plan sync-mli %s' to update the existing interface" (Filename.remove_extension p ^ ".ml"))
+  | Mli_not_found p ->
+      Some (Printf.sprintf "use 'reforge plan extract-mli %s' to generate the companion interface" (Filename.remove_extension p ^ ".ml"))
+  | Ambiguous_module (m, _) ->
+      Some (Printf.sprintf "use '--file <PATH>' to specify which '%s' module to refactor" m)
+  | Src_eq_dst ->
+      Some "destination path must differ from source path"
+  | _ -> None
+
+let pe_formatted_message err =
+  let msg = pe_message err in
+  match pe_suggestion err with
+  | Some hint -> Printf.sprintf "%s\n  suggestion: %s" msg hint
+  | None -> msg
+
 type ctx = {
   repo : Repository.t;
   content_of : string -> string option;

@@ -2251,6 +2251,250 @@ let test_smell_detection_modules () =
       Alcotest.(check bool) "detected Missing_Interface" true has_missing_mli
 
 (* ------------------------------------------------------------------ *)
+(* 51. Error categories & suggestions                                 *)
+(* ------------------------------------------------------------------ *)
+
+let test_error_categories_and_suggestions () =
+  (* Precondition_error category *)
+  Alcotest.(check string) "Src_not_found category"
+    "precondition error"
+    (Refactoring.string_of_error_category (Refactoring.pe_category (Refactoring.Src_not_found "foo.ml")));
+  Alcotest.(check string) "Src_eq_dst category"
+    "precondition error"
+    (Refactoring.string_of_error_category (Refactoring.pe_category Refactoring.Src_eq_dst));
+  Alcotest.(check string) "Mli_already_exists category"
+    "precondition error"
+    (Refactoring.string_of_error_category (Refactoring.pe_category (Refactoring.Mli_already_exists "foo.mli")));
+
+  (* Symbol_error category *)
+  Alcotest.(check string) "Fn_not_found category"
+    "symbol error"
+    (Refactoring.string_of_error_category (Refactoring.pe_category (Refactoring.Fn_not_found ("foo.ml", "bar"))));
+  Alcotest.(check string) "Invalid_fn_name category"
+    "symbol error"
+    (Refactoring.string_of_error_category (Refactoring.pe_category (Refactoring.Invalid_fn_name "123")));
+  Alcotest.(check string) "Arg_not_found category"
+    "symbol error"
+    (Refactoring.string_of_error_category (Refactoring.pe_category (Refactoring.Arg_not_found ("foo.ml", "bar", "x"))));
+
+  (* Safety_violation category *)
+  Alcotest.(check string) "Arg_in_use category"
+    "safety violation"
+    (Refactoring.string_of_error_category (Refactoring.pe_category (Refactoring.Arg_in_use ("foo.ml", "bar", "x"))));
+  Alcotest.(check string) "Optional_unlabel_unsafe category"
+    "safety violation"
+    (Refactoring.string_of_error_category (Refactoring.pe_category (Refactoring.Optional_unlabel_unsafe ("foo.ml", "bar", "x"))));
+  Alcotest.(check string) "Recursive_fn_inline category"
+    "safety violation"
+    (Refactoring.string_of_error_category (Refactoring.pe_category (Refactoring.Recursive_fn_inline ("foo.ml", "loop"))));
+
+  (* Suggestions *)
+  let err_fn = Refactoring.Fn_not_found ("lib/math.ml", "calc") in
+  (match Refactoring.pe_suggestion err_fn with
+   | Some s ->
+       Alcotest.(check string) "Fn_not_found suggestion text"
+         "verify that 'calc' is spelled correctly and defined at top-level in lib/math.ml" s
+   | None -> Alcotest.fail "expected suggestion for Fn_not_found");
+
+  let formatted = Refactoring.pe_formatted_message err_fn in
+  Alcotest.(check bool) "formatted contains message" true
+    (String.starts_with ~prefix:"function 'calc' not found in lib/math.ml" formatted);
+  Alcotest.(check bool) "formatted contains suggestion" true
+    (str_contains formatted "suggestion: verify that 'calc' is spelled correctly")
+
+(* ------------------------------------------------------------------ *)
+(* 52. OCaml 5.x argument syntax & deep patterns                     *)
+(* ------------------------------------------------------------------ *)
+
+let test_ocaml5_argument_syntax () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+
+  (* Make lib build all modules *)
+  write "lib/dune" "(library (name sample_lib))\n";
+  write "lib/ocaml5_features.ml"
+{|type user = { id : int; name : string }
+
+let sum_pair (a, b) = a + b
+
+let user_label { id; name } = string_of_int id ^ name
+
+let identity (type a) (x : a) : a = x
+
+let caller () =
+  let s = sum_pair (10, 20) in
+  let u = user_label { id = 1; name = "alice" } in
+  let i = identity 42 in
+  s + i
+|};
+
+  (* 1. Verify AST analysis parses and detects all 4 functions *)
+  let module An = (val runtime.analyzer) in
+  let an = An.create () in
+  let src_path = Filename.concat root "lib/ocaml5_features.ml" in
+  let content = In_channel.with_open_bin src_path In_channel.input_all in
+  let a = An.analyze an ~path:"lib/ocaml5_features.ml" ~content in
+  Alcotest.(check bool) "parse ok" true a.Source_file.parse_ok;
+  let fn_names = List.map (fun (vd : Source_file.value_def) -> vd.vd_name) a.Source_file.value_defs in
+  Alcotest.(check bool) "has sum_pair" true (List.mem "sum_pair" fn_names);
+  Alcotest.(check bool) "has user_label" true (List.mem "user_label" fn_names);
+  Alcotest.(check bool) "has identity" true (List.mem "identity" fn_names);
+  Alcotest.(check bool) "has caller" true (List.mem "caller" fn_names);
+  let id_fn = List.find (fun (vd : Source_file.value_def) -> vd.vd_name = "identity") a.Source_file.value_defs in
+  (match id_fn.Source_file.vd_params with
+   | [ id_param ] ->
+       Alcotest.(check string) "param name is x" "x" id_param.Source_file.fp_name
+   | _ -> Alcotest.fail "identity should have exactly 1 value parameter");
+
+  (* 2. Test rename-fn on sum_pair -> add_pair *)
+  (match Reforge_app.Plan_refactoring.plan_rename_fn ~rt:runtime ~config ~root
+           ~file:"lib/ocaml5_features.ml" ~old_name:"sum_pair" ~new_name:"add_pair" () with
+   | Error e -> Alcotest.fail ("plan rename-fn sum_pair failed: " ^ e)
+   | Ok (plan, _) ->
+       (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+        | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+        | Ok _ ->
+            let content = In_channel.with_open_bin (Filename.concat root "lib/ocaml5_features.ml") In_channel.input_all in
+            Alcotest.(check bool) "sum_pair renamed to add_pair" true (str_contains content "let add_pair (a, b) = a + b");
+            Alcotest.(check bool) "call site updated" true (str_contains content "let s = add_pair (10, 20) in");
+            (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.Change_plan.cp_id () with
+             | Error e -> Alcotest.fail ("undo failed: " ^ e)
+             | Ok _ -> ())));
+
+  (* 3. Test rename-fn on identity -> id_fn *)
+  (match Reforge_app.Plan_refactoring.plan_rename_fn ~rt:runtime ~config ~root
+           ~file:"lib/ocaml5_features.ml" ~old_name:"identity" ~new_name:"id_fn" () with
+   | Error e -> Alcotest.fail ("plan rename-fn identity failed: " ^ e)
+   | Ok (plan, _) ->
+       (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+        | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+        | Ok _ ->
+            let content = In_channel.with_open_bin (Filename.concat root "lib/ocaml5_features.ml") In_channel.input_all in
+            Alcotest.(check bool) "identity renamed to id_fn" true (str_contains content "let id_fn (type a) (x : a) : a = x");
+            Alcotest.(check bool) "call site updated" true (str_contains content "let i = id_fn 42 in");
+            (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.Change_plan.cp_id () with
+             | Error e -> Alcotest.fail ("undo failed: " ^ e)
+             | Ok _ -> ())));
+
+  (* 4. Test rename-arg on identity parameter x -> item *)
+  (match Reforge_app.Plan_refactoring.plan_rename_arg ~rt:runtime ~config ~root
+           ~file:"lib/ocaml5_features.ml" ~fn_name:"identity" ~old_arg:"x" ~new_arg:"item" () with
+   | Error e -> Alcotest.fail ("plan rename-arg x -> item failed: " ^ e)
+   | Ok (plan, _) ->
+       (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+        | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+        | Ok _ ->
+            let content = In_channel.with_open_bin (Filename.concat root "lib/ocaml5_features.ml") In_channel.input_all in
+            Alcotest.(check bool) "x renamed to item in def" true (str_contains content "let identity (type a) (item : a) : a = item");
+            (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.Change_plan.cp_id () with
+             | Error e -> Alcotest.fail ("undo failed: " ^ e)
+             | Ok _ -> ())));
+
+  (* 5. Verify attempting rename-arg on tuple pattern safely rejects *)
+  (match Reforge_app.Plan_refactoring.plan_rename_arg ~rt:runtime ~config ~root
+           ~file:"lib/ocaml5_features.ml" ~fn_name:"sum_pair" ~old_arg:"a" ~new_arg:"x" () with
+   | Error msg ->
+       Alcotest.(check bool) "rejects rename-arg on tuple pattern" true
+         (String.starts_with ~prefix:"argument 'a' not found in function sum_pair" msg)
+   | Ok _ -> Alcotest.fail "expected error on tuple pattern argument")
+
+(* ------------------------------------------------------------------ *)
+(* 53. Property-based tests: Path & Change_plan                       *)
+(* ------------------------------------------------------------------ *)
+
+let pbt_path_normalize_idempotent =
+  QCheck.Test.make ~count:500 ~name:"Path.normalize is idempotent"
+    QCheck.string (fun s ->
+      Path.normalize (Path.normalize s) = Path.normalize s)
+
+let pbt_path_normalize_no_empty_or_dots =
+  let gen_segment = QCheck.Gen.oneof_list [""; "."; "a"; "b"; "foo"; "bar_baz"; "deep"] in
+  let gen =
+    let open QCheck.Gen in
+    let* segs = list_size (int_range 0 10) gen_segment in
+    return (String.concat "/" segs)
+  in
+  QCheck.Test.make ~count:500 ~name:"Path.normalize removes dots and empty components"
+    (QCheck.make gen) (fun s ->
+      let norm = Path.normalize s in
+      if norm = "" then true
+      else
+        let parts = String.split_on_char '/' norm in
+        not (List.mem "." parts || List.mem "" parts))
+
+let pbt_path_is_inside_dir =
+  let gen_segment = QCheck.Gen.oneof_list ["a"; "b"; "foo"; "bar"; "pkg"] in
+  let gen =
+    let open QCheck.Gen in
+    let* dir = gen_segment in
+    let* file = gen_segment in
+    return (dir, file)
+  in
+  QCheck.Test.make ~count:200 ~name:"Path.is_inside_dir holds for concatenated paths"
+    (QCheck.make gen) (fun (dir, file) ->
+      let full = Path.concat dir file in
+      Path.is_inside_dir ~dir full)
+
+let pbt_change_plan_empty_edits =
+  QCheck.Test.make ~count:200 ~name:"Change_plan.apply_edits with empty edits is identity"
+    QCheck.string (fun content ->
+      Change_plan.apply_edits content [] = Ok content)
+
+let pbt_change_plan_rejects_overlapping =
+  let gen =
+    let open QCheck.Gen in
+    let* str_len = int_range 10 100 in
+    let* content = string_size ~gen:(char_range 'a' 'z') (return str_len) in
+    let* off = int_range 0 (str_len - 6) in
+    let* len1 = int_range 3 5 in
+    let* len2 = int_range 3 5 in
+    let e1 = { Change_plan.e_start_off = off; e_end_off = off + len1; e_start_line = 1; e_end_line = 1; e_replacement = "X"; e_reason = "e1" } in
+    let e2 = { Change_plan.e_start_off = off + 1; e_end_off = off + 1 + len2; e_start_line = 1; e_end_line = 1; e_replacement = "Y"; e_reason = "e2" } in
+    return (content, [e1; e2])
+  in
+  QCheck.Test.make ~count:500 ~name:"Change_plan.apply_edits rejects overlapping edits"
+    (QCheck.make gen) (fun (content, edits) ->
+      match Change_plan.apply_edits content edits with
+      | Error _ -> true
+      | Ok _ -> false)
+
+let pbt_change_plan_disjoint_edits =
+  let gen =
+    let open QCheck.Gen in
+    let* str_len = int_range 20 80 in
+    let* content = string_size ~gen:(char_range 'a' 'z') (return str_len) in
+    let* off1 = int_range 0 2 in
+    let* len1 = int_range 1 3 in
+    let* gap = int_range 1 4 in
+    let off2 = off1 + len1 + gap in
+    let* len2 = int_range 1 3 in
+    let* repl1 = string_size ~gen:(char_range 'A' 'Z') (int_range 1 4) in
+    let* repl2 = string_size ~gen:(char_range 'A' 'Z') (int_range 1 4) in
+    let e1 = { Change_plan.e_start_off = off1; e_end_off = off1 + len1; e_start_line = 1; e_end_line = 1; e_replacement = repl1; e_reason = "e1" } in
+    let e2 = { Change_plan.e_start_off = off2; e_end_off = off2 + len2; e_start_line = 1; e_end_line = 1; e_replacement = repl2; e_reason = "e2" } in
+    return (content, [e1; e2], off1, len1, repl1, off2, len2, repl2)
+  in
+  QCheck.Test.make ~count:500 ~name:"Change_plan.apply_edits splices disjoint edits correctly"
+    (QCheck.make gen) (fun (content, edits, off1, len1, repl1, off2, len2, repl2) ->
+      match Change_plan.apply_edits content edits with
+      | Error _ -> false
+      | Ok res ->
+          let expected =
+            String.sub content 0 off1
+            ^ repl1
+            ^ String.sub content (off1 + len1) (off2 - (off1 + len1))
+            ^ repl2
+            ^ String.sub content (off2 + len2) (String.length content - (off2 + len2))
+          in
+          res = expected)
+
+(* ------------------------------------------------------------------ *)
 (* Test runner                                                        *)
 (* ------------------------------------------------------------------ *)
 
@@ -2271,6 +2515,26 @@ let () =
         [
           Alcotest.test_case "edits application" `Quick test_change_plan_edits;
           Alcotest.test_case "overlapping edits" `Quick test_change_plan_overlapping;
+        ] );
+      ( "pbt_path",
+        [
+          QCheck_alcotest.to_alcotest pbt_path_normalize_idempotent;
+          QCheck_alcotest.to_alcotest pbt_path_normalize_no_empty_or_dots;
+          QCheck_alcotest.to_alcotest pbt_path_is_inside_dir;
+        ] );
+      ( "pbt_change_plan",
+        [
+          QCheck_alcotest.to_alcotest pbt_change_plan_empty_edits;
+          QCheck_alcotest.to_alcotest pbt_change_plan_rejects_overlapping;
+          QCheck_alcotest.to_alcotest pbt_change_plan_disjoint_edits;
+        ] );
+      ( "error_reporting",
+        [
+          Alcotest.test_case "error categories and suggestions" `Quick test_error_categories_and_suggestions;
+        ] );
+      ( "ocaml5_syntax",
+        [
+          Alcotest.test_case "future ocaml 5.x argument syntax" `Quick test_ocaml5_argument_syntax;
         ] );
       ( "integration",
         [

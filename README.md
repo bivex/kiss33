@@ -85,7 +85,7 @@ eval $(opam env)
 dune build @all
 ```
 
-Run tests (59 unit & e2e integration tests):
+Run tests (67 unit, property-based & e2e integration tests):
 ```bash
 dune runtest
 ```

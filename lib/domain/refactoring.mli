@@ -135,6 +135,19 @@ type plan_error =
 
 val pe_message : plan_error -> string
 
+type error_category =
+  | Precondition_error
+  | Symbol_error
+  | Safety_violation
+
+val string_of_error_category : error_category -> string
+
+val pe_category : plan_error -> error_category
+
+val pe_suggestion : plan_error -> string option
+
+val pe_formatted_message : plan_error -> string
+
 type ctx = {
   repo : Repository.t;
   content_of : string -> string option;

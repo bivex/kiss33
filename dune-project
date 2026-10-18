@@ -17,4 +17,6 @@
   cmdliner
   yojson
   compiler-libs
-  alcotest))
+  alcotest
+  (qcheck :with-test)
+  (qcheck-alcotest :with-test)))
