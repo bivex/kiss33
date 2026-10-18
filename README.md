@@ -135,6 +135,9 @@ reforge [COMMAND] [OPTIONS]
 | `reforge plan extract-fn <FILE> <RANGE> <NEW_FN_NAME>` | Plan extracting an expression or statement range into a top-level function, automatically computing free variables as parameters and substituting call sites. |
 | `reforge plan decompose-match <FILE> <FN>` | Plan extracting branches of a pattern match into dedicated pure handler functions (`handle_<fn>_<pat>`), reducing cyclomatic complexity. |
 | `reforge plan inline-fn <FILE> <FN>` | Plan inlining a function body across all call sites repo-wide, substituting arguments and removing the definition and `.mli` spec. |
+| `reforge plan rename-field <FILE> <TYPE> <OLD_FIELD> <NEW_FIELD>` | Plan renaming a record field in declarations, literals (including punned), field projections, and patterns. |
+| `reforge plan rename-constructor <FILE> <TYPE> <OLD_CTOR> <NEW_CTOR>` | Plan renaming a variant constructor in declarations, pattern matches, and expressions repo-wide. |
+| `reforge plan rename-module <SRC_MODULE> <NEW_MODULE> [--file=FILE]` | Plan renaming a file-level module (with file moves, dune updates, and reference rewrites) or an inner submodule. |
 | `reforge preview [PLAN]` | Show byte-precise unified diffs and operations of a plan (defaults to latest). |
 | `reforge diff [--plan=PLAN]` | Show unified diffs for a plan or applied changes. |
 | `reforge apply [PLAN]` | Execute the plan transactionally with automatic backups. |
@@ -432,6 +435,63 @@ created .reforge/plans/plan-0013.json
 $ reforge preview
 $ reforge apply
 $ reforge validate
+```
+
+### 15. Rename Record Field
+
+Safely rename a record field in its declaration, pattern-matching destructuring, field projections (`r.field`),
+record updates (`{ r with field = v }`), and punned expressions/patterns (`{ field }` $\to$ `{ new_field = field }`):
+
+```bash
+$ reforge plan rename-field lib/user.ml user_profile email user_email
+created .reforge/plans/plan-0014.json
+  rename field user_profile.email -> user_email in lib/user.ml (3 files edited)
+  operations:
+    edit  lib/user.ml (4 edits)
+    edit  lib/user.mli (1 edits)
+    edit  bin/main.ml (2 edits)
+
+$ reforge preview
+$ reforge apply
+$ reforge validate
+```
+
+### 16. Rename Variant Constructor
+
+Rename a variant constructor across its declaration, mirror `.mli` specification, expressions, and pattern-matching:
+
+```bash
+$ reforge plan rename-constructor lib/token.ml token Word Lexeme
+created .reforge/plans/plan-0015.json
+  rename constructor token.Word -> Lexeme in lib/token.ml (3 files edited)
+  operations:
+    edit  lib/token.ml (3 edits)
+    edit  lib/token.mli (1 edits)
+    edit  bin/parser.ml (2 edits)
+
+$ reforge preview
+$ reforge apply
+$ reforge validate
+```
+
+### 17. Rename Module (File-level or Submodule)
+
+Rename a file-backed module across the repository (moving `.ml` and `.mli`, updating `(modules ...)` in `dune`,
+and rewriting all `open M` and qualified `M.foo` references) or rename an inner `module Sub = ...` definition:
+
+```bash
+# Rename top-level module (or file path)
+$ reforge plan rename-module Util Common
+created .reforge/plans/plan-0016.json
+  rename module Util -> Common (2 files moved, 3 files edited)
+  operations:
+    move  lib/util.ml -> lib/common.ml
+    move  lib/util.mli -> lib/common.mli
+    edit  lib/dune (1 edits)
+    edit  bin/main.ml (2 edits)
+
+# Or rename an inner submodule within a specific file
+$ reforge plan rename-module --file lib/math.ml Algebra LinearAlgebra
 ```
 
 ---

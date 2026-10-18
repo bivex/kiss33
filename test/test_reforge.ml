@@ -1498,6 +1498,279 @@ let test_inline_fn_errors () =
    | Error msg -> Alcotest.(check bool) "error recursive fn" true (String.starts_with ~prefix:"cannot inline recursive function" msg)
    | Ok _ -> Alcotest.fail "expected error for recursive function")
 
+let test_e2e_rename_field () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/util.ml"
+    "type point = { x : int; y : int }\n\
+     let make_pt x y = { x; y }\n\
+     let get_x p = p.x\n\
+     let match_pt p = match p with { x; y } -> x + y\n";
+  write "lib/util.mli"
+    "type point = { x : int; y : int }\n\
+     val make_pt : int -> int -> point\n\
+     val get_x : point -> int\n\
+     val match_pt : point -> int\n";
+  write "bin/main.ml"
+    "open Sample_lib.Util\n\
+     let run () =\n\
+       let p = make_pt 10 20 in\n\
+       get_x p + p.x\n";
+
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_rename_field ~rt:runtime ~config ~root
+      ~file:"lib/util.ml" ~type_name:"point" ~old_field:"x" ~new_field:"x_coord" ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_rename_field failed: " ^ e)
+  | Ok (plan, _path) ->
+      Alcotest.(check int) "3 files touched" 3 (List.length plan.cp_ops);
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       | Ok applied ->
+           Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
+           let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+           let mli_c = In_channel.with_open_bin (Filename.concat root "lib/util.mli") In_channel.input_all in
+           let main_c = In_channel.with_open_bin (Filename.concat root "bin/main.ml") In_channel.input_all in
+           Alcotest.(check bool) "type decl updated in util.ml" true (str_contains util_c "type point = { x_coord : int; y : int }");
+           Alcotest.(check bool) "punned literal expanded in util.ml" true (str_contains util_c "{ x_coord = x; y }");
+           Alcotest.(check bool) "field access updated in util.ml" true (str_contains util_c "p.x_coord");
+           Alcotest.(check bool) "punned pattern expanded in util.ml" true (str_contains util_c "{ x_coord = x; y }");
+           Alcotest.(check bool) "type decl updated in util.mli" true (str_contains mli_c "type point = { x_coord : int; y : int }");
+           Alcotest.(check bool) "field access updated in main.ml" true (str_contains main_c "p.x_coord");
+           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+            | Error e -> Alcotest.fail ("validate failed: " ^ e)
+            | Ok checks ->
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+            | Error e -> Alcotest.fail ("undo failed: " ^ e)
+            | Ok _ ->
+                let restored_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+                Alcotest.(check bool) "util.ml restored" true (str_contains restored_util "type point = { x : int; y : int }")))
+
+let test_rename_field_errors () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/util.ml" "type point = { x : int; y : int }\n";
+
+  (* Field not found *)
+  (match Reforge_app.Plan_refactoring.plan_rename_field ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~type_name:"point" ~old_field:"z" ~new_field:"depth" () with
+   | Error msg -> Alcotest.(check bool) "error field not found" true (String.starts_with ~prefix:"field 'z' not found" msg)
+   | Ok _ -> Alcotest.fail "expected error for unknown field");
+
+  (* Field collision *)
+  (match Reforge_app.Plan_refactoring.plan_rename_field ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~type_name:"point" ~old_field:"x" ~new_field:"y" () with
+   | Error msg -> Alcotest.(check bool) "error collision" true (String.starts_with ~prefix:"field 'y' already exists" msg)
+   | Ok _ -> Alcotest.fail "expected error for field collision");
+
+  (* Invalid field name *)
+  (match Reforge_app.Plan_refactoring.plan_rename_field ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~type_name:"point" ~old_field:"x" ~new_field:"BadName" () with
+   | Error msg -> Alcotest.(check bool) "error invalid field" true (String.starts_with ~prefix:"invalid OCaml record field identifier" msg)
+   | Ok _ -> Alcotest.fail "expected error for invalid field name");
+
+  (* Same name *)
+  (match Reforge_app.Plan_refactoring.plan_rename_field ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~type_name:"point" ~old_field:"x" ~new_field:"x" () with
+   | Error msg -> Alcotest.(check bool) "error same name" true (String.starts_with ~prefix:"source and destination are the same" msg)
+   | Ok _ -> Alcotest.fail "expected error for same name")
+
+let test_e2e_rename_constructor () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/util.ml"
+    "type color = Red | Green of int | Blue\n\
+     let is_red c = match c with Red -> true | Green _ -> false | Blue -> false\n\
+     let make_red () = Red\n";
+  write "lib/util.mli"
+    "type color = Red | Green of int | Blue\n\
+     val is_red : color -> bool\n\
+     val make_red : unit -> color\n";
+  write "bin/main.ml"
+    "let check () =\n\
+       match Sample_lib.Util.make_red () with\n\
+       | Sample_lib.Util.Red -> true\n\
+       | _ -> false\n";
+
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_rename_constructor ~rt:runtime ~config ~root
+      ~file:"lib/util.ml" ~type_name:"color" ~old_ctor:"Red" ~new_ctor:"Crimson" ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_rename_constructor failed: " ^ e)
+  | Ok (plan, _path) ->
+      Alcotest.(check int) "3 files touched" 3 (List.length plan.cp_ops);
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       | Ok applied ->
+           Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
+           let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+           let mli_c = In_channel.with_open_bin (Filename.concat root "lib/util.mli") In_channel.input_all in
+           let main_c = In_channel.with_open_bin (Filename.concat root "bin/main.ml") In_channel.input_all in
+           Alcotest.(check bool) "decl updated in util.ml" true (str_contains util_c "Crimson | Green of int | Blue");
+           Alcotest.(check bool) "pattern updated in util.ml" true (str_contains util_c "Crimson -> true");
+           Alcotest.(check bool) "expr updated in util.ml" true (str_contains util_c "let make_red () = Crimson");
+           Alcotest.(check bool) "decl updated in util.mli" true (str_contains mli_c "Crimson | Green of int | Blue");
+           Alcotest.(check bool) "ref updated in main.ml" true (str_contains main_c "Sample_lib.Util.Crimson -> true");
+           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+            | Error e -> Alcotest.fail ("validate failed: " ^ e)
+            | Ok checks ->
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+            | Error e -> Alcotest.fail ("undo failed: " ^ e)
+            | Ok _ ->
+                let restored_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+                Alcotest.(check bool) "util.ml restored" true (str_contains restored_util "Red | Green of int | Blue")))
+
+let test_rename_constructor_errors () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/util.ml" "type color = Red | Green\n";
+
+  (* Constructor not found *)
+  (match Reforge_app.Plan_refactoring.plan_rename_constructor ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~type_name:"color" ~old_ctor:"Blue" ~new_ctor:"Azure" () with
+   | Error msg -> Alcotest.(check bool) "error ctor not found" true (String.starts_with ~prefix:"constructor 'Blue' not found" msg)
+   | Ok _ -> Alcotest.fail "expected error for unknown constructor");
+
+  (* Constructor collision *)
+  (match Reforge_app.Plan_refactoring.plan_rename_constructor ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~type_name:"color" ~old_ctor:"Red" ~new_ctor:"Green" () with
+   | Error msg -> Alcotest.(check bool) "error collision" true (String.starts_with ~prefix:"constructor 'Green' already exists" msg)
+   | Ok _ -> Alcotest.fail "expected error for constructor collision");
+
+  (* Invalid constructor name (lowercase) *)
+  (match Reforge_app.Plan_refactoring.plan_rename_constructor ~rt:runtime ~config ~root
+          ~file:"lib/util.ml" ~type_name:"color" ~old_ctor:"Red" ~new_ctor:"crimson" () with
+   | Error msg -> Alcotest.(check bool) "error invalid ctor" true (String.starts_with ~prefix:"invalid OCaml constructor identifier" msg)
+   | Ok _ -> Alcotest.fail "expected error for lowercase constructor name")
+
+let test_e2e_rename_module_file () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_rename_module ~rt:runtime ~config ~root
+      ~old_name:"Util" ~new_name:"Helper" ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_rename_module failed: " ^ e)
+  | Ok (plan, _path) ->
+      Alcotest.(check bool) "plan description" true (str_contains plan.cp_description "rename module Util -> Helper");
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       | Ok applied ->
+           Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
+           Alcotest.(check bool) "helper.ml exists" true (Sys.file_exists (Filename.concat root "lib/helper.ml"));
+           Alcotest.(check bool) "helper.mli exists" true (Sys.file_exists (Filename.concat root "lib/helper.mli"));
+           Alcotest.(check bool) "util.ml removed" false (Sys.file_exists (Filename.concat root "lib/util.ml"));
+           let main_c = In_channel.with_open_bin (Filename.concat root "bin/main.ml") In_channel.input_all in
+           Alcotest.(check bool) "main.ml references Helper" true (str_contains main_c "Sample_lib.Helper.hello");
+           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+            | Error e -> Alcotest.fail ("validate failed: " ^ e)
+            | Ok checks ->
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+            | Error e -> Alcotest.fail ("undo failed: " ^ e)
+            | Ok _ ->
+                Alcotest.(check bool) "util.ml restored" true (Sys.file_exists (Filename.concat root "lib/util.ml"));
+                Alcotest.(check bool) "helper.ml gone" false (Sys.file_exists (Filename.concat root "lib/helper.ml"))))
+
+let test_e2e_rename_module_submodule () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  let write rel text =
+    let p = Filename.concat root rel in
+    let oc = open_out_bin p in
+    output_string oc text;
+    close_out oc
+  in
+  write "lib/util.ml"
+    "module Math = struct\n\
+       let double x = x * 2\n\
+     end\n\
+     let calc x = Math.double x\n";
+  write "bin/main.ml"
+    "let run x = Sample_lib.Util.Math.double x\n";
+
+  let plan_res =
+    Reforge_app.Plan_refactoring.plan_rename_module ~rt:runtime ~config ~root
+      ~file:"lib/util.ml" ~old_name:"Math" ~new_name:"Arithmetic" ()
+  in
+  match plan_res with
+  | Error e -> Alcotest.fail ("plan_rename_module submodule failed: " ^ e)
+  | Ok (plan, _path) ->
+      Alcotest.(check int) "2 files touched" 2 (List.length plan.cp_ops);
+      (match Reforge_app.Apply_refactoring.apply ~rt:runtime ~root ~plan () with
+       | Error err -> Alcotest.fail ("apply failed: " ^ Reforge_app.Apply_refactoring.pp_failure err)
+       | Ok applied ->
+           Alcotest.(check bool) "status applied" true (applied.Change_plan.ap_status = Change_plan.Applied);
+           let util_c = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+           let main_c = In_channel.with_open_bin (Filename.concat root "bin/main.ml") In_channel.input_all in
+           Alcotest.(check bool) "submodule decl updated in util.ml" true (str_contains util_c "module Arithmetic = struct");
+           Alcotest.(check bool) "submodule call updated in util.ml" true (str_contains util_c "Arithmetic.double x");
+           Alcotest.(check bool) "external call updated in main.ml" true (str_contains main_c "Sample_lib.Util.Arithmetic.double x");
+           (match Reforge_app.Validate_changes.run ~rt:runtime ~config ~root () with
+            | Error e -> Alcotest.fail ("validate failed: " ^ e)
+            | Ok checks ->
+                let parse_check = List.find (fun c -> String.starts_with ~prefix:"parse-check" c.Reforge_app.Validate_changes.c_name) checks in
+                Alcotest.(check bool) "parse check passed" true parse_check.Reforge_app.Validate_changes.c_passed);
+           (match Reforge_app.Undo_refactoring.run ~rt:runtime ~root ~plan_id:plan.cp_id () with
+            | Error e -> Alcotest.fail ("undo failed: " ^ e)
+            | Ok _ ->
+                let restored_util = In_channel.with_open_bin (Filename.concat root "lib/util.ml") In_channel.input_all in
+                Alcotest.(check bool) "util.ml restored" true (str_contains restored_util "module Math = struct")))
+
+let test_rename_module_errors () =
+  let root = make_scratch_repo () in
+  let config = Config.default in
+
+  (* Module not found *)
+  (match Reforge_app.Plan_refactoring.plan_rename_module ~rt:runtime ~config ~root
+          ~old_name:"NoSuchMod" ~new_name:"Other" () with
+   | Error msg -> Alcotest.(check bool) "error mod not found" true (String.starts_with ~prefix:"module 'NoSuchMod' not found" msg)
+   | Ok _ -> Alcotest.fail "expected error for unknown module");
+
+  (* Invalid module name *)
+  (match Reforge_app.Plan_refactoring.plan_rename_module ~rt:runtime ~config ~root
+          ~old_name:"Util" ~new_name:"invalid_lowercase" () with
+   | Error msg -> Alcotest.(check bool) "error invalid mod name" true (String.starts_with ~prefix:"invalid OCaml module identifier" msg)
+   | Ok _ -> Alcotest.fail "expected error for lowercase module name")
+
 (* ------------------------------------------------------------------ *)
 (* Test runner                                                        *)
 (* ------------------------------------------------------------------ *)
@@ -1552,6 +1825,13 @@ let () =
           Alcotest.test_case "decompose-match errors" `Quick test_decompose_match_errors;
           Alcotest.test_case "e2e inline-fn" `Quick test_e2e_inline_fn;
           Alcotest.test_case "inline-fn errors" `Quick test_inline_fn_errors;
+          Alcotest.test_case "e2e rename-field" `Quick test_e2e_rename_field;
+          Alcotest.test_case "rename-field errors" `Quick test_rename_field_errors;
+          Alcotest.test_case "e2e rename-constructor" `Quick test_e2e_rename_constructor;
+          Alcotest.test_case "rename-constructor errors" `Quick test_rename_constructor_errors;
+          Alcotest.test_case "e2e rename-module file" `Quick test_e2e_rename_module_file;
+          Alcotest.test_case "e2e rename-module submodule" `Quick test_e2e_rename_module_submodule;
+          Alcotest.test_case "rename-module errors" `Quick test_rename_module_errors;
           Alcotest.test_case "stale plan rejection" `Quick test_stale_plan_rejection;
         ] );
     ]

@@ -242,14 +242,31 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
                 | Pmod_ident lid -> push_lident lid Source_file.Ref_local_open
                 | _ -> it.module_expr it od.Parsetree.popen_expr);
                it.expr it body)
-           | Pexp_record (fields, _) ->
+           | Pexp_field (e1, lid) ->
+               push_lident lid Source_file.Ref_field;
+               it.expr it e1
+           | Pexp_record (fields, opt_base) ->
                List.iter
-                 (fun (lid, e) ->
-                    push_lident lid Source_file.Ref_value;
-                    it.expr it e)
-                 fields
+                 (fun (lid, e1) ->
+                    let is_punned =
+                      lid.Asttypes.loc.Location.loc_ghost
+                      || (lid.Asttypes.loc.Location.loc_start.Lexing.pos_cnum
+                          = e1.Parsetree.pexp_loc.Location.loc_start.Lexing.pos_cnum
+                          && lid.Asttypes.loc.Location.loc_end.Lexing.pos_cnum
+                             = e1.Parsetree.pexp_loc.Location.loc_end.Lexing.pos_cnum)
+                    in
+                    if is_punned then begin
+                      let loc = loc_of e1.Parsetree.pexp_loc in
+                      push_ref (flatten_lident lid.Asttypes.txt) loc Source_file.Ref_field_punned
+                    end
+                    else begin
+                      push_lident lid Source_file.Ref_field;
+                      it.expr it e1
+                    end)
+                 fields;
+               Option.iter (it.expr it) opt_base
            | Pexp_setfield (e1, lid, e2) ->
-               push_lident lid Source_file.Ref_value;
+               push_lident lid Source_file.Ref_field;
                it.expr it e1;
                it.expr it e2
            | _ -> default.expr it e);
@@ -263,9 +280,22 @@ let analyze_content ~(path : string) ~(is_interface : bool) (content : string) :
                | Some (_, p) -> it.pat it p)
            | Ppat_record (fields, _) ->
                List.iter
-                 (fun (lid, p) ->
-                    push_lident lid Source_file.Ref_pattern;
-                    it.pat it p)
+                 (fun (lid, p1) ->
+                    let is_punned =
+                      lid.Asttypes.loc.Location.loc_ghost
+                      || (lid.Asttypes.loc.Location.loc_start.Lexing.pos_cnum
+                          = p1.Parsetree.ppat_loc.Location.loc_start.Lexing.pos_cnum
+                          && lid.Asttypes.loc.Location.loc_end.Lexing.pos_cnum
+                             = p1.Parsetree.ppat_loc.Location.loc_end.Lexing.pos_cnum)
+                    in
+                    if is_punned then begin
+                      let loc = loc_of p1.Parsetree.ppat_loc in
+                      push_ref (flatten_lident lid.Asttypes.txt) loc Source_file.Ref_field_punned
+                    end
+                    else begin
+                      push_lident lid Source_file.Ref_field;
+                      it.pat it p1
+                    end)
                  fields
            | _ -> default.pat it p);
       typ =

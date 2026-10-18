@@ -20,6 +20,23 @@ type intent =
   | Extract_fn of { file : string; range : string; new_fn_name : string }
   | Decompose_match of { file : string; fn_name : string }
   | Inline_fn of { file : string; fn_name : string }
+  | Rename_field of {
+      file : string;
+      type_name : string;
+      old_field : string;
+      new_field : string;
+    }
+  | Rename_constructor of {
+      file : string;
+      type_name : string;
+      old_ctor : string;
+      new_ctor : string;
+    }
+  | Rename_module of {
+      file : string option;
+      old_name : string;
+      new_name : string;
+    }
 
 type plan_error =
   | Src_not_found of string
@@ -61,6 +78,16 @@ type plan_error =
   | Recursive_match_branch of string * string
   | Recursive_fn_inline of string * string
   | No_function_body of string * string
+  | Field_not_found of string * string * string
+  | Field_collision of string * string * string
+  | Invalid_field_name of string
+  | Ctor_not_found of string * string * string
+  | Ctor_collision of string * string * string
+  | Invalid_ctor_name of string
+  | Module_not_found of string * string
+  | Module_collision of string * string
+  | Invalid_module_name of string
+  | Ambiguous_module of string * string list
 
 val pe_message : plan_error -> string
 
@@ -197,3 +224,33 @@ val plan_inline_fn :
   fn_name:string ->
   (Change_plan.t, plan_error) result
 (** Inline a function body across all call sites, updating definition and interface. *)
+
+val plan_rename_field :
+  ctx:ctx ->
+  file:string ->
+  type_name:string ->
+  old_field:string ->
+  new_field:string ->
+  (Change_plan.t, plan_error) result
+(** Rename a record field across its type declarations (.ml and companion .mli),
+    record literals (including punned), field projections, assignments, and patterns. *)
+
+val plan_rename_constructor :
+  ctx:ctx ->
+  file:string ->
+  type_name:string ->
+  old_ctor:string ->
+  new_ctor:string ->
+  (Change_plan.t, plan_error) result
+(** Rename a variant constructor across its declarations (.ml and companion .mli)
+    and all expressions and pattern matches repo-wide. *)
+
+val plan_rename_module :
+  ctx:ctx ->
+  ?file:string ->
+  old_name:string ->
+  new_name:string ->
+  unit ->
+  (Change_plan.t, plan_error) result
+(** Rename a module: either a file-level module (moving files, updating dune and
+    rewriting references) or an inner submodule within a file. *)

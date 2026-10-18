@@ -20,6 +20,23 @@ type intent =
   | Extract_fn of { file : string; range : string; new_fn_name : string }
   | Decompose_match of { file : string; fn_name : string }
   | Inline_fn of { file : string; fn_name : string }
+  | Rename_field of {
+      file : string;
+      type_name : string;
+      old_field : string;
+      new_field : string;
+    }
+  | Rename_constructor of {
+      file : string;
+      type_name : string;
+      old_ctor : string;
+      new_ctor : string;
+    }
+  | Rename_module of {
+      file : string option;
+      old_name : string;
+      new_name : string;
+    }
 
 type plan_error =
   | Src_not_found of string
@@ -61,6 +78,16 @@ type plan_error =
   | Recursive_match_branch of string * string
   | Recursive_fn_inline of string * string
   | No_function_body of string * string
+  | Field_not_found of string * string * string
+  | Field_collision of string * string * string
+  | Invalid_field_name of string
+  | Ctor_not_found of string * string * string
+  | Ctor_collision of string * string * string
+  | Invalid_ctor_name of string
+  | Module_not_found of string * string
+  | Module_collision of string * string
+  | Invalid_module_name of string
+  | Ambiguous_module of string * string list
 
 let pe_message = function
   | Src_not_found p -> Printf.sprintf "source not found in repository: %s" p
@@ -144,6 +171,30 @@ let pe_message = function
       Printf.sprintf "cannot decompose match in '%s' (%s): a branch contains a recursive call to '%s'" fn f fn
   | Recursive_fn_inline (f, fn) -> Printf.sprintf "cannot inline recursive function '%s' (%s)" fn f
   | No_function_body (f, fn) -> Printf.sprintf "function '%s' (%s) has no body expression to inline" fn f
+  | Field_not_found (f, t, field) ->
+      Printf.sprintf "field '%s' not found in type '%s' (%s)" field t f
+  | Field_collision (f, t, field) ->
+      Printf.sprintf "field '%s' already exists in type '%s' (%s)" field t f
+  | Invalid_field_name field ->
+      Printf.sprintf "invalid OCaml record field identifier: '%s'" field
+  | Ctor_not_found (f, t, ctor) ->
+      Printf.sprintf "constructor '%s' not found in type '%s' (%s)" ctor t f
+  | Ctor_collision (f, t, ctor) ->
+      Printf.sprintf "constructor '%s' already exists in type '%s' (%s)" ctor t f
+  | Invalid_ctor_name ctor ->
+      Printf.sprintf "invalid OCaml constructor identifier: '%s'" ctor
+  | Module_not_found (f, m) ->
+      if f = "" then Printf.sprintf "module '%s' not found in repository" m
+      else Printf.sprintf "module '%s' not found in %s" m f
+  | Module_collision (f, m) ->
+      if f = "" then Printf.sprintf "module '%s' already exists in repository" m
+      else Printf.sprintf "module '%s' already exists in %s" m f
+  | Invalid_module_name m ->
+      Printf.sprintf "invalid OCaml module identifier: '%s'" m
+  | Ambiguous_module (m, files) ->
+      Printf.sprintf
+        "module '%s' is declared in multiple files (%s); use --file to specify which one to refactor"
+        m (String.concat ", " files)
 
 type ctx = {
   repo : Repository.t;

@@ -206,3 +206,47 @@ let run_plan_inline_fn ~rt ~json root file fn_name =
   | Ok (plan, path) ->
       emit_plan_created ~command:"plan inline-fn" ~json plan path
 
+let run_plan_rename_field ~rt ~json root file type_name old_field new_field =
+  if file = "" || type_name = "" || old_field = "" || new_field = "" then begin
+    let msg = "missing required arguments: FILE TYPE OLD_FIELD NEW_FIELD" in
+    if json then (emit_error_json ~command:"plan rename-field" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_rename_field ~rt ~config ~root ~file ~type_name ~old_field ~new_field () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan rename-field" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan rename-field" ~json plan path
+
+let run_plan_rename_constructor ~rt ~json root file type_name old_ctor new_ctor =
+  if file = "" || type_name = "" || old_ctor = "" || new_ctor = "" then begin
+    let msg = "missing required arguments: FILE TYPE OLD_CTOR NEW_CTOR" in
+    if json then (emit_error_json ~command:"plan rename-constructor" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  match App.Plan_refactoring.plan_rename_constructor ~rt ~config ~root ~file ~type_name ~old_ctor ~new_ctor () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan rename-constructor" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan rename-constructor" ~json plan path
+
+let run_plan_rename_module ~rt ~json root file old_name new_name =
+  if old_name = "" || new_name = "" then begin
+    let msg = "missing required arguments: SRC_MODULE NEW_MODULE" in
+    if json then (emit_error_json ~command:"plan rename-module" msg; exit exit_usage_code)
+    else (prerr_endline ("error: " ^ msg); exit exit_usage_code)
+  end;
+  let config = Cli_config.load ~rt ~root in
+  let file_opt = if file = "" then None else Some file in
+  match App.Plan_refactoring.plan_rename_module ~rt ~config ~root ?file:file_opt ~old_name ~new_name () with
+  | Error e ->
+      if json then (emit_error_json ~command:"plan rename-module" e; exit exit_usage_code)
+      else (prerr_endline ("error: " ^ e); exit exit_usage_code)
+  | Ok (plan, path) ->
+      emit_plan_created ~command:"plan rename-module" ~json plan path
+
+

@@ -32,6 +32,8 @@ let ctx_name : Source_file.ref_context -> string = function
   | Source_file.Ref_pattern -> "pattern"
   | Source_file.Ref_type -> "type"
   | Source_file.Ref_class -> "class"
+  | Source_file.Ref_field -> "field"
+  | Source_file.Ref_field_punned -> "field (punned)"
 
 let kind_name : Source_file.file_kind -> string = function
   | Source_file.Ml -> "ml"

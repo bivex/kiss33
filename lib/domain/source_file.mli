@@ -35,6 +35,8 @@ type ref_context =
   | Ref_pattern
   | Ref_type
   | Ref_class
+  | Ref_field
+  | Ref_field_punned
 
 type reference = {
   ref_segments : string list;

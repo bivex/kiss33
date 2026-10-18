@@ -13,3 +13,6 @@ include Plan_opens
 include Plan_extract_fn
 include Plan_decompose_match
 include Plan_inline_fn
+include Plan_field
+include Plan_constructor
+include Plan_module

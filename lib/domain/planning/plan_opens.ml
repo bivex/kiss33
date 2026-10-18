@@ -93,6 +93,8 @@ let plan_remove_unused_opens ~(ctx : ctx) ~(file : string) :
                    | Source_file.Ref_pattern
                    | Source_file.Ref_type
                    | Source_file.Ref_class
+                   | Source_file.Ref_field
+                   | Source_file.Ref_field_punned
                    | Source_file.Ref_module_expr -> (
                        match r.Source_file.ref_segments with
                        | h :: _ -> List.mem h exports

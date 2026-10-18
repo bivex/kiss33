@@ -57,6 +57,8 @@ type ref_context =
   | Ref_pattern       (* M.C in a pattern *)
   | Ref_type          (* M.t in a type expression *)
   | Ref_class         (* class references *)
+  | Ref_field         (* record field access or projection *)
+  | Ref_field_punned  (* punned record field in expression or pattern *)
 
 type reference = {
   ref_segments : string list;  (* e.g. ["Util"; "x"] for Util.x *)

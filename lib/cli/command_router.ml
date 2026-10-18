@@ -166,6 +166,35 @@ let run ~rt ~argv () : int =
        and+ fn = Arg.(value & pos 1 string "" & info [] ~docv:"FN" ~doc:"Name of the function to inline.") in
        run_plan_inline_fn ~rt ~json:j r file fn)
   in
+  let plan_rename_field_cmd =
+    mk "rename-field" "Plan renaming a record field across definitions, literals, accessors and patterns."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"File declaring the record type.")
+       and+ type_name = Arg.(value & pos 1 string "" & info [] ~docv:"TYPE" ~doc:"Record type name.")
+       and+ old_field = Arg.(value & pos 2 string "" & info [] ~docv:"OLD_FIELD" ~doc:"Current name of the field.")
+       and+ new_field = Arg.(value & pos 3 string "" & info [] ~docv:"NEW_FIELD" ~doc:"New name of the field.") in
+       run_plan_rename_field ~rt ~json:j r file type_name old_field new_field)
+  in
+  let plan_rename_constructor_cmd =
+    mk "rename-constructor" "Plan renaming a variant constructor across definitions, patterns and expressions."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & pos 0 string "" & info [] ~docv:"FILE" ~doc:"File declaring the variant type.")
+       and+ type_name = Arg.(value & pos 1 string "" & info [] ~docv:"TYPE" ~doc:"Variant type name.")
+       and+ old_ctor = Arg.(value & pos 2 string "" & info [] ~docv:"OLD_CTOR" ~doc:"Current name of the constructor.")
+       and+ new_ctor = Arg.(value & pos 3 string "" & info [] ~docv:"NEW_CTOR" ~doc:"New name of the constructor.") in
+       run_plan_rename_constructor ~rt ~json:j r file type_name old_ctor new_ctor)
+  in
+  let plan_rename_module_cmd =
+    mk "rename-module" "Plan renaming a module or inner submodule across the repository."
+      (let+ r = root
+       and+ j = json
+       and+ file = Arg.(value & opt string "" & info [ "file"; "f" ] ~docv:"FILE" ~doc:"File containing the inner submodule (optional for file modules).")
+       and+ old_name = Arg.(value & pos 0 string "" & info [] ~docv:"SRC_MODULE" ~doc:"Module name or file path to rename.")
+       and+ new_name = Arg.(value & pos 1 string "" & info [] ~docv:"NEW_MODULE" ~doc:"New module name or file path.") in
+       run_plan_rename_module ~rt ~json:j r file old_name new_name)
+  in
   let plan_cmd =
     Cmd.group (Cmd.info "plan" ~doc:"Create change plans.")
       [
@@ -183,6 +212,9 @@ let run ~rt ~argv () : int =
         plan_extract_fn_cmd;
         plan_decompose_match_cmd;
         plan_inline_fn_cmd;
+        plan_rename_field_cmd;
+        plan_rename_constructor_cmd;
+        plan_rename_module_cmd;
       ]
   in
   let preview_cmd =

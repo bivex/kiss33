@@ -67,6 +67,20 @@ let is_valid_ident (name : string) : bool =
         done;
         !ok)
 
+let is_valid_module_or_ctor_ident (name : string) : bool =
+  let len = String.length name in
+  if len = 0 then false
+  else
+    let first = name.[0] in
+    first >= 'A' && first <= 'Z'
+    && (let ok = ref true in
+        for i = 1 to len - 1 do
+          let c = name.[i] in
+          if not ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c = '_' || c = '\'') then
+            ok := false
+        done;
+        !ok)
+
 let count_lines (content : string) : int =
   let n = String.length content in
   if n = 0 then 0

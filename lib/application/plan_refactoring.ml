@@ -269,6 +269,55 @@ let plan_inline_fn ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
       | Error e -> Error e
       | Ok path -> Ok (plan, path))
 
+let plan_rename_field ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
+    ~file ~type_name ~old_field ~new_field () : (Change_plan.t * string, string) result =
+  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let store_t = St.create ~root in
+  let id = St.next_plan_id store_t in
+  let command =
+    Printf.sprintf "reforge plan rename-field %s %s %s %s" file type_name old_field new_field
+  in
+  let* ctx = make_ctx ~rt ~config ~root ~id ~command in
+  match Refactoring.plan_rename_field ~ctx ~file ~type_name ~old_field ~new_field with
+  | Error e -> Error (Refactoring.pe_message e)
+  | Ok plan -> (
+      match St.save_plan store_t plan with
+      | Error e -> Error e
+      | Ok path -> Ok (plan, path))
+
+let plan_rename_constructor ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
+    ~file ~type_name ~old_ctor ~new_ctor () : (Change_plan.t * string, string) result =
+  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let store_t = St.create ~root in
+  let id = St.next_plan_id store_t in
+  let command =
+    Printf.sprintf "reforge plan rename-constructor %s %s %s %s" file type_name old_ctor new_ctor
+  in
+  let* ctx = make_ctx ~rt ~config ~root ~id ~command in
+  match Refactoring.plan_rename_constructor ~ctx ~file ~type_name ~old_ctor ~new_ctor with
+  | Error e -> Error (Refactoring.pe_message e)
+  | Ok plan -> (
+      match St.save_plan store_t plan with
+      | Error e -> Error e
+      | Ok path -> Ok (plan, path))
+
+let plan_rename_module ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root
+    ?file ~old_name ~new_name () : (Change_plan.t * string, string) result =
+  let module St = (val rt.Reforge_ports.Runtime.store) in
+  let store_t = St.create ~root in
+  let id = St.next_plan_id store_t in
+  let command =
+    match file with
+    | Some f -> Printf.sprintf "reforge plan rename-module --file %s %s %s" f old_name new_name
+    | None -> Printf.sprintf "reforge plan rename-module %s %s" old_name new_name
+  in
+  let* ctx = make_ctx ~rt ~config ~root ~id ~command in
+  match Refactoring.plan_rename_module ~ctx ?file ~old_name ~new_name () with
+  | Error e -> Error (Refactoring.pe_message e)
+  | Ok plan -> (
+      match St.save_plan store_t plan with
+      | Error e -> Error e
+      | Ok path -> Ok (plan, path))
 
 (* All plans with their derived status. *)
 let list_status ~(rt : Reforge_ports.Runtime.t) ~root () :
