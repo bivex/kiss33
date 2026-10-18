@@ -219,7 +219,7 @@ let plan_move ~(ctx : ctx) ~src ~dst ~semantic : (Change_plan.t, plan_error) res
 
         (* ---- dune (modules ...) updates ---- *)
         let dune_edits =
-          compute_dune_edits ~ctx ~repo ~semantic ~moved_set ~moved_modules ~warn
+          compute_dune_edits { ctx; repo; semantic; moved_set; moved_modules; warn }
         in
 
         (* name collisions in destination scopes *)
