@@ -22,11 +22,14 @@ let emit_error_json ~(command : string) (message : string) : unit =
   print_string (Yojson.Basic.to_string envelope);
   print_newline ()
 
-let ctx_name : Source_file.ref_context -> string = function
-  | Source_file.Ref_open -> "open"
-  | Source_file.Ref_local_open -> "local-open"
-  | Source_file.Ref_include -> "include"
-  | Source_file.Ref_module_expr -> "module"
+let module_ctx_name = function
+  | Source_file.Ref_open -> Some "open"
+  | Source_file.Ref_local_open -> Some "local-open"
+  | Source_file.Ref_include -> Some "include"
+  | Source_file.Ref_module_expr -> Some "module"
+  | _ -> None
+
+let term_ctx_name = function
   | Source_file.Ref_value -> "value"
   | Source_file.Ref_constructor -> "constructor"
   | Source_file.Ref_pattern -> "pattern"
@@ -34,6 +37,12 @@ let ctx_name : Source_file.ref_context -> string = function
   | Source_file.Ref_class -> "class"
   | Source_file.Ref_field -> "field"
   | Source_file.Ref_field_punned -> "field (punned)"
+  | _ -> "unknown"
+
+let ctx_name ctx =
+  match module_ctx_name ctx with
+  | Some name -> name
+  | None -> term_ctx_name ctx
 
 let kind_name : Source_file.file_kind -> string = function
   | Source_file.Ml -> "ml"
