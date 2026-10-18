@@ -26,23 +26,23 @@ let detect_all ~(repo : Repository.t) ~(graph : Module_graph.t)
 
   (* 2. Graph-level: Circular_Dependency *)
   let cycles = Module_graph.cycles graph in
-  List.iter (fun cycle ->
-    if List.length cycle > 1 then
-      let cycle_str = String.concat " -> " cycle in
-      let head = List.hd cycle in
-      all_smells := {
-        smell_id = "Circular_Dependency";
-        category = Modules;
-        severity = Critical;
-        file = head;
-        start_line = 1;
-        end_line = 1;
-        symbol = head;
-        evidence = Printf.sprintf "module cycle detected: %s" cycle_str;
-        threshold = "module_dependency_graph_contains_cycle";
-        confidence = 1.0;
-        suggested_refactoring = "break cycle by moving shared functions with reforge plan move-fn";
-      } :: !all_smells)
+  List.iter (function
+    | head :: _ as cycle when List.length cycle > 1 ->
+        let cycle_str = String.concat " -> " cycle in
+        all_smells := {
+          smell_id = "Circular_Dependency";
+          category = Modules;
+          severity = Critical;
+          file = head;
+          start_line = 1;
+          end_line = 1;
+          symbol = head;
+          evidence = Printf.sprintf "module cycle detected: %s" cycle_str;
+          threshold = "module_dependency_graph_contains_cycle";
+          confidence = 1.0;
+          suggested_refactoring = "break cycle by moving shared functions with reforge plan move-fn";
+        } :: !all_smells
+    | _ -> ())
     cycles;
 
   (* Sort deterministically: highest severity first, then by file, then by line *)

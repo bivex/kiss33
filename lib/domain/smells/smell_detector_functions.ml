@@ -370,11 +370,13 @@ let detect_function_smells ~(file : string) ~(content : string)
   Hashtbl.iter (fun (lit_str, is_num) locs ->
     let count = List.length locs in
     if count >= 3 then
-      let first_loc = List.hd (List.rev locs) in
-      let id, cat, thresh =
-        if is_num then ("Magic_Number", Control_flow, "unexplained_numeric_literal_repeated")
-        else ("Magic_String", Control_flow, "unexplained_string_literal_repeated")
-      in
+      match List.rev locs with
+      | [] -> ()
+      | first_loc :: _ ->
+          let id, cat, thresh =
+            if is_num then ("Magic_Number", Control_flow, "unexplained_numeric_literal_repeated")
+            else ("Magic_String", Control_flow, "unexplained_string_literal_repeated")
+          in
       emit {
         smell_id = id;
         category = cat;
