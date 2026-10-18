@@ -3,6 +3,37 @@
 open Reforge_domain
 
 let ( let* ) = Result.bind
+let ( let*? ) = Option.bind
+
+module Plan_helpers = struct
+  let resolve_analysis (type a b)
+      (module Fs : Reforge_ports.Filesystem.S with type t = a)
+      (module An : Reforge_ports.Source_analyzer.S with type t = b)
+      (fs_t : a) (an_t : b) (repo : Repository.t)
+      (cache : (string, Source_file.analysis) Hashtbl.t)
+      (path : string) : Source_file.analysis option =
+    match Hashtbl.find_opt cache path with
+    | Some a -> Some a
+    | None ->
+        let*? fe = Repository.find_file repo path in
+        match Hashtbl.find_opt cache fe.Repository.fe_hash with
+        | Some a -> Some a
+        | None ->
+            let*? content = Result.to_option (Fs.read fs_t ~rel:path) in
+            let a = An.analyze an_t ~path ~content in
+            Hashtbl.replace cache fe.Repository.fe_hash a;
+            Some a
+
+  let resolve_plan_status (type a)
+      (module St : Reforge_ports.Change_store.S with type t = a)
+      (store_t : a) (p : Change_plan.t) : Change_plan.t * Change_plan.status =
+    let status =
+      match St.load_applied store_t ~plan_id:p.Change_plan.cp_id with
+      | Ok ap -> ap.Change_plan.ap_status
+      | Error _ -> Change_plan.Pending
+    in
+    (p, status)
+end
 
 (* Build the domain planning context with port-backed content and analysis
    accessors. *)
@@ -18,21 +49,7 @@ let make_ctx ~(rt : Reforge_ports.Runtime.t) ~(config : Config.t) ~root ~id
     match Fs.read fs_t ~rel:path with Error _ -> None | Ok c -> Some c
   in
   let analysis_of path =
-    match Hashtbl.find_opt cache path with
-    | Some a -> Some a
-    | None -> (
-        match Repository.find_file repo path with
-        | None -> None
-        | Some fe -> (
-            match Hashtbl.find_opt cache fe.Repository.fe_hash with
-            | Some a -> Some a
-            | None -> (
-                match Fs.read fs_t ~rel:path with
-                | Error _ -> None
-                | Ok content ->
-                    let a = An.analyze an_t ~path ~content in
-                    Hashtbl.replace cache fe.Repository.fe_hash a;
-                    Some a)))
+    Plan_helpers.resolve_analysis (module Fs) (module An) fs_t an_t repo cache path
   in
   Ok
     {
@@ -442,13 +459,4 @@ let list_status ~(rt : Reforge_ports.Runtime.t) ~root () :
   let module St = (val rt.Reforge_ports.Runtime.store) in
   let store_t = St.create ~root in
   let* plans = St.all_plans store_t in
-  Ok
-    (List.map
-       (fun p ->
-          let status =
-            match St.load_applied store_t ~plan_id:p.Change_plan.cp_id with
-            | Ok ap -> ap.Change_plan.ap_status
-            | Error _ -> Change_plan.Pending
-          in
-          (p, status))
-       plans)
+  Ok (List.map (Plan_helpers.resolve_plan_status (module St) store_t) plans)
