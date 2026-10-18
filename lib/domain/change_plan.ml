@@ -42,72 +42,66 @@ type t = {
   cp_version : string;
 }
 
+let ( let* ) = Result.bind
+
+let summarize_op = function
+  | Op_create_dir { path } -> "mkdir " ^ path
+  | Op_move_file { src; dst; _ } -> "move " ^ src ^ " -> " ^ dst
+  | Op_edit_file { path; edits; _ } ->
+      "edit " ^ path ^ " (" ^ string_of_int (List.length edits) ^ " edits)"
+  | Op_write_file { path; _ } -> "write " ^ path
+
 let applied_summary (t : t) : string =
-  String.concat ", "
-    (List.map
-       (function
-         | Op_create_dir { path } -> "mkdir " ^ path
-         | Op_move_file { src; dst; _ } -> "move " ^ src ^ " -> " ^ dst
-         | Op_edit_file { path; edits; _ } ->
-             "edit " ^ path ^ " (" ^ string_of_int (List.length edits) ^ " edits)"
-         | Op_write_file { path; _ } -> "write " ^ path)
-       t.cp_ops)
+  String.concat ", " (List.map summarize_op t.cp_ops)
 
 (* Apply [edits] to [content] by byte splicing. Edits must be disjoint and
    in range; they are applied from the end of the file backwards so that
    earlier offsets stay valid. *)
+let validate_edit_bounds len e =
+  if e.e_start_off < 0 || e.e_end_off > len || e.e_start_off > e.e_end_off then
+    Error
+      (Printf.sprintf "edit out of range [%d, %d) for content of length %d (%s)"
+         e.e_start_off e.e_end_off len e.e_reason)
+  else Ok ()
+
+let rec check_all_bounds len = function
+  | [] -> Ok ()
+  | e :: rest ->
+      let* () = validate_edit_bounds len e in
+      check_all_bounds len rest
+
+let rec check_disjoint prev = function
+  | [] -> Ok ()
+  | e :: rest -> (
+      match prev with
+      | Some p when p.e_start_off < e.e_end_off ->
+          Error
+            (Printf.sprintf "overlapping edits near offset %d (%s)" e.e_start_off
+               e.e_reason)
+      | _ -> check_disjoint (Some e) rest)
+
+let rec splice_edits content pos tail = function
+  | [] -> Ok (String.sub content 0 pos ^ tail)
+  | e :: rest ->
+      let middle = String.sub content e.e_end_off (pos - e.e_end_off) in
+      splice_edits content e.e_start_off (e.e_replacement ^ middle ^ tail) rest
+
 let apply_edits (content : string) (edits : edit list) : (string, string) result =
   let len = String.length content in
   let sorted = List.sort (fun a b -> compare b.e_start_off a.e_start_off) edits in
-  let rec check_bounds = function
-    | [] -> Ok ()
-    | e :: rest ->
-        if e.e_start_off < 0 || e.e_end_off > len || e.e_start_off > e.e_end_off then
-          Error
-            (Printf.sprintf "edit out of range [%d, %d) for content of length %d (%s)"
-               e.e_start_off e.e_end_off len e.e_reason)
-        else check_bounds rest
-  in
-  let rec check_disjoint prev = function
-    | [] -> Ok ()
-    | e :: rest -> (
-        match prev with
-        | Some p when p.e_start_off < e.e_end_off ->
-            Error
-              (Printf.sprintf "overlapping edits near offset %d (%s)" e.e_start_off
-                 e.e_reason)
-        | _ -> check_disjoint (Some e) rest)
-  in
-  match check_bounds sorted with
-  | Error e -> Error e
-  | Ok () -> (
-      match check_disjoint None sorted with
-      | Error e -> Error e
-      | Ok () ->
-          (* [pos] is the end offset of the previously processed (later)
-             edit; [tail] is the transformed content from [pos] onward. *)
-          let rec go pos tail = function
-            | [] -> Ok (String.sub content 0 pos ^ tail)
-            | e :: rest ->
-                let middle =
-                  String.sub content e.e_end_off (pos - e.e_end_off)
-                in
-                go e.e_start_off (e.e_replacement ^ middle ^ tail) rest
-          in
-          go len "" sorted)
+  let* () = check_all_bounds len sorted in
+  let* () = check_disjoint None sorted in
+  splice_edits content len "" sorted
+
+let paths_of_op = function
+  | Op_create_dir { path } -> [ path ]
+  | Op_move_file { src; dst; _ } -> [ src; dst ]
+  | Op_edit_file { path; _ } -> [ path ]
+  | Op_write_file { path; _ } -> [ path ]
 
 (* All repository paths a plan touches, sorted and deduplicated. *)
 let touched_paths (t : t) : string list =
-  let ps =
-    List.concat_map
-      (function
-        | Op_create_dir { path } -> [ path ]
-        | Op_move_file { src; dst; _ } -> [ src; dst ]
-        | Op_edit_file { path; _ } -> [ path ]
-        | Op_write_file { path; _ } -> [ path ])
-      t.cp_ops
-  in
-  List.sort_uniq compare ps
+  List.concat_map paths_of_op t.cp_ops |> List.sort_uniq compare
 
 (* What an application of a plan did, for validation and undo. *)
 type applied = {
