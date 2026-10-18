@@ -86,7 +86,7 @@ let test_dune_analyzer () =
   let targets, isd = An.parse_dune an ~content in
   Alcotest.(check (option string)) "include_subdirs" (Some "qualified") isd;
   Alcotest.(check int) "target count" 1 (List.length targets);
-  let tg = List.hd targets in
+  let tg = match targets with [ tg ] -> tg | _ -> Alcotest.fail "expected 1 target" in
   Alcotest.(check string) "target name" "my_lib" tg.Repository.tg_name;
   Alcotest.(check (option bool)) "wrapped false" (Some false) tg.Repository.tg_wrapped;
   match tg.Repository.tg_modules.Repository.mf_spec with
@@ -151,7 +151,7 @@ let test_cycles () =
   let graph = Module_graph.build repo [ ("cyc/a.ml", a_analysis); ("cyc/b.ml", b_analysis); ("cyc/c.ml", c_analysis) ] in
   let cycs = Module_graph.cycles graph in
   Alcotest.(check int) "found 1 cycle" 1 (List.length cycs);
-  let cyc = List.hd cycs in
+  let cyc = match cycs with [ cyc ] -> cyc | _ -> Alcotest.fail "expected 1 cycle" in
   (* Sorted canonically starting with smallest *)
   Alcotest.(check (list string)) "cycle elements" [ "cyc/a.ml"; "cyc/b.ml"; "cyc/c.ml" ] cyc
 
@@ -1190,7 +1190,7 @@ let test_e2e_introduce_param_object_no_mli () =
   in
   write "lib/dune" "(library (name sample_lib) (modules util))\n";
   write "lib/util.ml" "let pair a b = (a, b)\n";
-  (try Sys.remove (Filename.concat root "lib/util.mli") with _ -> ());
+  (try Sys.remove (Filename.concat root "lib/util.mli") with Sys_error _ -> ());
 
   let plan_res =
     Reforge_app.Plan_refactoring.plan_introduce_param_object ~rt:runtime ~config ~root
